@@ -28,6 +28,7 @@ tree-sitter-css = "0.25"
 tree-sitter-swift = "0.7"
 tree-sitter-c-sharp = "0.23"
 tree-sitter-java = "0.23"
+tree-sitter-cpp = "0.23"
 
 # Error handling
 eyre = "0.6"

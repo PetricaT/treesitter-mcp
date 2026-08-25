@@ -183,6 +183,7 @@ pub fn extract_enhanced_shape(
         Language::CSharp => extract_csharp_enhanced(tree, source, include_code)?,
         Language::Java => extract_java_enhanced(tree, source, include_code)?,
         Language::Go => extract_go_enhanced(tree, source, include_code)?,
+        Language::Cpp => extract_cpp_enhanced(tree, source, include_code)?,
         Language::Html | Language::Css => {
             // HTML and CSS are markup/styling languages and are not suitable for
             // structural shape analysis. They lack the function/class/module structure
@@ -1530,6 +1531,277 @@ fn extract_go_enhanced(
     })
 }
 
+/// Extract enhanced shape from C/C++ source code
+fn extract_cpp_enhanced(
+    tree: &Tree,
+    source: &str,
+    include_code: bool,
+) -> Result<EnhancedFileShape, io::Error> {
+    let mut functions = Vec::new();
+    let mut structs = Vec::new();
+    let mut classes = Vec::new();
+    let mut imports = Vec::new();
+
+    let query = Query::new(
+        &tree_sitter_cpp::LANGUAGE.into(),
+        r#"
+        (function_definition) @func
+        (declaration
+            declarator: (function_declarator
+                declarator: (identifier) @func.name)) @func
+        (class_specifier name: (type_identifier) @class.name) @class
+        (struct_specifier name: (type_identifier) @struct.name) @struct
+        (preproc_include) @import
+        "#,
+    )
+    .map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to create tree-sitter query: {e}"),
+        )
+    })?;
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    let mut processed_nodes = std::collections::HashSet::new();
+
+    while let Some(match_) = matches.next() {
+        for capture in match_.captures {
+            let node = capture.node;
+            let capture_name = query.capture_names()[capture.index as usize];
+
+            match capture_name {
+                "func" if node.kind() == "function_definition" => {
+                    let node_id = node.id();
+                    if processed_nodes.contains(&node_id) {
+                        continue;
+                    }
+                    processed_nodes.insert(node_id);
+
+                    // Extract function name from declarator
+                    if let Some(name_node) = node
+                        .child_by_field_name("declarator")
+                        .and_then(|d| d.child_by_field_name("name"))
+                        .or_else(|| {
+                            // For complex declarators, walk down to find identifier
+                            let mut cursor = node.walk();
+                            for child in node.children(&mut cursor) {
+                                if child.kind() == "function_declarator" {
+                                    if let Some(name) = child.child_by_field_name("declarator") {
+                                        if name.kind() == "identifier" {
+                                            return Some(name);
+                                        }
+                                    }
+                                }
+                            }
+                            None
+                        })
+                    {
+                        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                            let line = node.start_position().row + 1;
+                            let end_line = node.end_position().row + 1;
+                            let signature = extract_signature(node, source)?;
+                            let doc = extract_doc_comment(node, source, Language::Cpp)?;
+                            let code = if include_code {
+                                extract_code(node, source)?
+                            } else {
+                                None
+                            };
+
+                            functions.push(EnhancedFunctionInfo {
+                                name: name.to_string(),
+                                signature,
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                                annotations: vec![],
+                            });
+                        }
+                    }
+                }
+                "func" if node.kind() == "declaration" => {
+                    // Top-level function declarations (prototypes)
+                    let node_id = node.id();
+                    if processed_nodes.contains(&node_id) {
+                        continue;
+                    }
+                    processed_nodes.insert(node_id);
+
+                    if let Some(name_node) = node
+                        .child_by_field_name("declarator")
+                        .and_then(|d| d.child_by_field_name("declarator"))
+                    {
+                        if name_node.kind() == "identifier" {
+                            if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                                let line = node.start_position().row + 1;
+                                let end_line = node.end_position().row + 1;
+                                let signature = extract_signature(node, source)?;
+                                let doc = extract_doc_comment(node, source, Language::Cpp)?;
+
+                                functions.push(EnhancedFunctionInfo {
+                                    name: name.to_string(),
+                                    signature,
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code: None,
+                                    annotations: vec![],
+                                });
+                            }
+                        }
+                    }
+                }
+                "class.name" => {
+                    if let Ok(class_node) = find_parent_by_type(node, "class_specifier") {
+                        let node_id = class_node.id();
+                        if processed_nodes.contains(&node_id) {
+                            continue;
+                        }
+                        processed_nodes.insert(node_id);
+
+                        if let Ok(name) = node.utf8_text(source.as_bytes()) {
+                            let line = class_node.start_position().row + 1;
+                            let end_line = class_node.end_position().row + 1;
+                            let doc = extract_doc_comment(class_node, source, Language::Cpp)?;
+                            let code = if include_code {
+                                extract_code(class_node, source)?
+                            } else {
+                                None
+                            };
+
+                            // Extract methods from class body
+                            let methods =
+                                extract_cpp_class_methods(class_node, source, include_code)?;
+
+                            classes.push(EnhancedClassInfo {
+                                name: name.to_string(),
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                                methods,
+                                implements: vec![],
+                                properties: vec![],
+                                fields: vec![],
+                            });
+                        }
+                    }
+                }
+                "struct.name" => {
+                    if let Ok(struct_node) = find_parent_by_type(node, "struct_specifier") {
+                        let node_id = struct_node.id();
+                        if processed_nodes.contains(&node_id) {
+                            continue;
+                        }
+                        processed_nodes.insert(node_id);
+
+                        if let Ok(name) = node.utf8_text(source.as_bytes()) {
+                            let line = struct_node.start_position().row + 1;
+                            let end_line = struct_node.end_position().row + 1;
+                            let doc = extract_doc_comment(struct_node, source, Language::Cpp)?;
+                            let code = if include_code {
+                                extract_code(struct_node, source)?
+                            } else {
+                                None
+                            };
+
+                            structs.push(EnhancedStructInfo {
+                                name: name.to_string(),
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                            });
+                        }
+                    }
+                }
+                "import" => {
+                    if let Ok(text) = node.utf8_text(source.as_bytes()) {
+                        imports.push(ImportInfo {
+                            text: text.to_string(),
+                            line: node.start_position().row + 1,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(EnhancedFileShape {
+        path: None,
+        language: None,
+        functions,
+        structs,
+        classes,
+        imports,
+        impl_blocks: vec![],
+        traits: vec![],
+        interfaces: vec![],
+        properties: vec![],
+        dependencies: vec![],
+    })
+}
+
+/// Extract methods from a C++ class body
+fn extract_cpp_class_methods(
+    class_node: Node,
+    source: &str,
+    include_code: bool,
+) -> Result<Vec<EnhancedFunctionInfo>, io::Error> {
+    let mut methods = Vec::new();
+
+    if let Some(body) = class_node.child_by_field_name("body") {
+        let mut cursor = body.walk();
+        for child in body.children(&mut cursor) {
+            // C++ class methods can be function_definition (out-of-line) or
+            // declaration with function_declarator (inline declarations)
+            let is_method = child.kind() == "function_definition"
+                || (child.kind() == "declaration"
+                    && child
+                        .child_by_field_name("declarator")
+                        .map(|d| d.kind() == "function_declarator")
+                        .unwrap_or(false));
+
+            if is_method {
+                if let Some(name_node) = child
+                    .child_by_field_name("declarator")
+                    .and_then(|d| d.child_by_field_name("declarator"))
+                    .or_else(|| child.child_by_field_name("declarator"))
+                {
+                    if name_node.kind() == "identifier" {
+                        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                            let line = child.start_position().row + 1;
+                            let end_line = child.end_position().row + 1;
+                            let signature = extract_signature(child, source)?;
+                            let doc = extract_doc_comment(child, source, Language::Cpp)?;
+                            let code = if include_code {
+                                extract_code(child, source)?
+                            } else {
+                                None
+                            };
+
+                            methods.push(EnhancedFunctionInfo {
+                                name: name.to_string(),
+                                signature,
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                                annotations: vec![],
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(methods)
+}
+
 /// Helper function to extract methods from a Java class
 fn extract_java_class_methods(
     class_node: Node,
@@ -1990,6 +2262,22 @@ fn extract_signature(node: Node, source: &str) -> Result<String, io::Error> {
             || trimmed.starts_with("export async function ")
             || trimmed.starts_with("func ")
             || trimmed.starts_with("type ")
+            || trimmed.starts_with("class ")
+            || trimmed.starts_with("struct ")
+            || trimmed.starts_with("namespace ")
+            || trimmed.starts_with("virtual ")
+            || trimmed.starts_with("static ")
+            || trimmed.starts_with("inline ")
+            || trimmed.starts_with("constexpr ")
+            || trimmed.starts_with("auto ")
+            || trimmed.starts_with("void ")
+            || trimmed.starts_with("int ")
+            || trimmed.starts_with("bool ")
+            || trimmed.starts_with("char ")
+            || trimmed.starts_with("float ")
+            || trimmed.starts_with("double ")
+            || trimmed.starts_with("size_t ")
+            || trimmed.starts_with("std::")
         {
             declaration_start_idx = idx;
             break;
@@ -2183,7 +2471,8 @@ fn is_comment_node(node: &Node, language: Language) -> bool {
         | Language::Swift
         | Language::CSharp
         | Language::Java
-        | Language::Go => kind == "line_comment" || kind == "block_comment" || kind == "comment",
+        | Language::Go
+        | Language::Cpp => kind == "line_comment" || kind == "block_comment" || kind == "comment",
         Language::Python => kind == "comment",
         _ => false,
     }
@@ -2212,7 +2501,11 @@ fn extract_doc_from_comment(comment_text: &str, language: Language) -> String {
                 String::new()
             }
         }
-        Language::JavaScript | Language::TypeScript | Language::Java | Language::Go => {
+        Language::JavaScript
+        | Language::TypeScript
+        | Language::Java
+        | Language::Go
+        | Language::Cpp => {
             // Handle /** */ and // comments
             if trimmed.starts_with("/**") && trimmed.ends_with("*/") {
                 trimmed

@@ -220,7 +220,15 @@ fn is_context_node(node_type: &str, language: Language) -> bool {
                 | "interface_declaration"
                 | "enum_declaration"
         ),
-        _ => false,
+        Language::Cpp => matches!(
+            node_type,
+            "function_definition" | "class_specifier" | "struct_specifier" | "namespace_definition"
+        ),
+        Language::Go => matches!(
+            node_type,
+            "function_declaration" | "method_declaration" | "type_spec"
+        ),
+        Language::Html | Language::Css | Language::Swift => false,
     }
 }
 
@@ -239,7 +247,9 @@ fn extract_scope_info(node: Node, source: &str) -> Option<ScopeInfo> {
         "constructor_declaration" => "constructor",
         "property_declaration" => "property",
         "interface_declaration" => "interface",
-        "namespace_declaration" => "namespace",
+        "namespace_declaration" | "namespace_definition" => "namespace",
+        "class_specifier" => "class",
+        "struct_specifier" => "struct",
         _ => "unknown",
     };
 
@@ -255,6 +265,19 @@ fn extract_scope_info(node: Node, source: &str) -> Option<ScopeInfo> {
 
 /// Extract name from a node
 fn extract_name(node: Node, source: &str) -> Option<String> {
+    // C++: name is nested function_definition -> declarator(function_declarator) -> declarator
+    if node.kind() == "function_definition" {
+        if let Some(decl) = node.child_by_field_name("declarator") {
+            if decl.kind() == "function_declarator" {
+                if let Some(inner) = decl.child_by_field_name("declarator") {
+                    if let Ok(text) = inner.utf8_text(source.as_bytes()) {
+                        return Some(text.to_string());
+                    }
+                }
+            }
+        }
+    }
+
     // Try common name field names
     for field_name in &["name", "property", "field"] {
         if let Some(name_node) = node.child_by_field_name(field_name) {
