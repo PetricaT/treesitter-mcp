@@ -183,6 +183,7 @@ pub fn extract_enhanced_shape(
         Language::CSharp => extract_csharp_enhanced(tree, source, include_code)?,
         Language::Java => extract_java_enhanced(tree, source, include_code)?,
         Language::Go => extract_go_enhanced(tree, source, include_code)?,
+        Language::C => extract_c_enhanced(tree, source, include_code)?,
         Language::Cpp => extract_cpp_enhanced(tree, source, include_code)?,
         Language::Html | Language::Css => {
             // HTML and CSS are markup/styling languages and are not suitable for
@@ -1802,6 +1803,245 @@ fn extract_cpp_class_methods(
     Ok(methods)
 }
 
+/// Extract enhanced shape from C source code
+fn extract_c_enhanced(
+    tree: &Tree,
+    source: &str,
+    include_code: bool,
+) -> Result<EnhancedFileShape, io::Error> {
+    let mut functions = Vec::new();
+    let mut structs = Vec::new();
+    let mut imports = Vec::new();
+
+    let query = Query::new(
+        &tree_sitter_c::LANGUAGE.into(),
+        r#"
+        (function_definition) @func
+        (declaration
+            declarator: (function_declarator
+                declarator: (identifier) @func.name)) @func
+        (struct_specifier name: (type_identifier) @struct.name) @struct
+        (enum_specifier name: (type_identifier) @enum.name) @enum
+        (type_definition declarator: (type_identifier) @typedef.name) @typedef
+        (preproc_include) @import
+        "#,
+    )
+    .map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to create tree-sitter query: {e}"),
+        )
+    })?;
+
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+
+    let mut processed_nodes = std::collections::HashSet::new();
+
+    while let Some(match_) = matches.next() {
+        for capture in match_.captures {
+            let node = capture.node;
+            let capture_name = query.capture_names()[capture.index as usize];
+
+            match capture_name {
+                "func" if node.kind() == "function_definition" => {
+                    let node_id = node.id();
+                    if processed_nodes.contains(&node_id) {
+                        continue;
+                    }
+                    processed_nodes.insert(node_id);
+
+                    if let Some(name_node) = node
+                        .child_by_field_name("declarator")
+                        .and_then(|d| {
+                            // walk down function_declarator -> declarator (identifier)
+                            let mut cur = d;
+                            loop {
+                                if cur.kind() == "function_declarator" {
+                                    if let Some(inner) = cur.child_by_field_name("declarator") {
+                                        if inner.kind() == "identifier"
+                                            || inner.kind() == "type_identifier"
+                                        {
+                                            return Some(inner);
+                                        }
+                                        cur = inner;
+                                        continue;
+                                    }
+                                }
+                                if cur.kind() == "identifier" {
+                                    return Some(cur);
+                                }
+                                break;
+                            }
+                            None
+                        })
+                    {
+                        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                            let line = node.start_position().row + 1;
+                            let end_line = node.end_position().row + 1;
+                            let signature = extract_signature(node, source)?;
+                            let doc = extract_doc_comment(node, source, Language::C)?;
+                            let code = if include_code {
+                                extract_code(node, source)?
+                            } else {
+                                None
+                            };
+
+                            functions.push(EnhancedFunctionInfo {
+                                name: name.to_string(),
+                                signature,
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                                annotations: vec![],
+                            });
+                        }
+                    }
+                }
+                "func" if node.kind() == "declaration" => {
+                    let node_id = node.id();
+                    if processed_nodes.contains(&node_id) {
+                        continue;
+                    }
+                    processed_nodes.insert(node_id);
+
+                    if let Some(name_node) = node
+                        .child_by_field_name("declarator")
+                        .and_then(|d| d.child_by_field_name("declarator"))
+                    {
+                        if name_node.kind() == "identifier" {
+                            if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                                let line = node.start_position().row + 1;
+                                let end_line = node.end_position().row + 1;
+                                let signature = extract_signature(node, source)?;
+                                let doc = extract_doc_comment(node, source, Language::C)?;
+
+                                functions.push(EnhancedFunctionInfo {
+                                    name: name.to_string(),
+                                    signature,
+                                    line,
+                                    end_line,
+                                    doc,
+                                    code: None,
+                                    annotations: vec![],
+                                });
+                            }
+                        }
+                    }
+                }
+                "struct.name" => {
+                    if let Ok(struct_node) = find_parent_by_type(node, "struct_specifier") {
+                        let node_id = struct_node.id();
+                        if processed_nodes.contains(&node_id) {
+                            continue;
+                        }
+                        processed_nodes.insert(node_id);
+
+                        if let Ok(name) = node.utf8_text(source.as_bytes()) {
+                            let line = struct_node.start_position().row + 1;
+                            let end_line = struct_node.end_position().row + 1;
+                            let doc = extract_doc_comment(struct_node, source, Language::C)?;
+                            let code = if include_code {
+                                extract_code(struct_node, source)?
+                            } else {
+                                None
+                            };
+
+                            structs.push(EnhancedStructInfo {
+                                name: name.to_string(),
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                            });
+                        }
+                    }
+                }
+                "enum.name" => {
+                    if let Ok(enum_node) = find_parent_by_type(node, "enum_specifier") {
+                        let node_id = enum_node.id();
+                        if processed_nodes.contains(&node_id) {
+                            continue;
+                        }
+                        processed_nodes.insert(node_id);
+
+                        if let Ok(name) = node.utf8_text(source.as_bytes()) {
+                            let line = enum_node.start_position().row + 1;
+                            let end_line = enum_node.end_position().row + 1;
+                            let doc = extract_doc_comment(enum_node, source, Language::C)?;
+                            let code = if include_code {
+                                extract_code(enum_node, source)?
+                            } else {
+                                None
+                            };
+
+                            structs.push(EnhancedStructInfo {
+                                name: name.to_string(),
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                            });
+                        }
+                    }
+                }
+                "typedef.name" => {
+                    if let Ok(typedef_node) = find_parent_by_type(node, "type_definition") {
+                        let node_id = typedef_node.id();
+                        if processed_nodes.contains(&node_id) {
+                            continue;
+                        }
+                        processed_nodes.insert(node_id);
+
+                        if let Ok(name) = node.utf8_text(source.as_bytes()) {
+                            let line = typedef_node.start_position().row + 1;
+                            let end_line = typedef_node.end_position().row + 1;
+                            let doc = extract_doc_comment(typedef_node, source, Language::C)?;
+                            let code = if include_code {
+                                extract_code(typedef_node, source)?
+                            } else {
+                                None
+                            };
+
+                            structs.push(EnhancedStructInfo {
+                                name: name.to_string(),
+                                line,
+                                end_line,
+                                doc,
+                                code,
+                            });
+                        }
+                    }
+                }
+                "import" => {
+                    if let Ok(text) = node.utf8_text(source.as_bytes()) {
+                        imports.push(ImportInfo {
+                            text: text.to_string(),
+                            line: node.start_position().row + 1,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(EnhancedFileShape {
+        path: None,
+        language: None,
+        functions,
+        structs,
+        classes: vec![],
+        imports,
+        impl_blocks: vec![],
+        traits: vec![],
+        interfaces: vec![],
+        properties: vec![],
+        dependencies: vec![],
+    })
+}
+
 /// Helper function to extract methods from a Java class
 fn extract_java_class_methods(
     class_node: Node,
@@ -2393,7 +2633,9 @@ fn is_line_comment_text(trimmed: &str, language: Language) -> bool {
         | Language::Swift
         | Language::CSharp
         | Language::Java
-        | Language::Go => trimmed.starts_with("//"),
+        | Language::Go
+        | Language::C
+        | Language::Cpp => trimmed.starts_with("//"),
         _ => false,
     }
 }
@@ -2408,6 +2650,8 @@ fn supports_block_comments(language: Language) -> bool {
             | Language::CSharp
             | Language::Java
             | Language::Go
+            | Language::C
+            | Language::Cpp
     )
 }
 
@@ -2472,6 +2716,7 @@ fn is_comment_node(node: &Node, language: Language) -> bool {
         | Language::CSharp
         | Language::Java
         | Language::Go
+        | Language::C
         | Language::Cpp => kind == "line_comment" || kind == "block_comment" || kind == "comment",
         Language::Python => kind == "comment",
         _ => false,
@@ -2505,6 +2750,7 @@ fn extract_doc_from_comment(comment_text: &str, language: Language) -> String {
         | Language::TypeScript
         | Language::Java
         | Language::Go
+        | Language::C
         | Language::Cpp => {
             // Handle /** */ and // comments
             if trimmed.starts_with("/**") && trimmed.ends_with("*/") {

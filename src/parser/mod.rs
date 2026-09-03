@@ -28,7 +28,9 @@ pub enum Language {
     Java,
     /// Go programming language (.go)
     Go,
-    /// C/C++ programming language (.cpp, .cc, .cxx, .c++, .h, .hpp)
+    /// C programming language (.c, .h)
+    C,
+    /// C++ programming language (.cpp, .cc, .cxx, .c++, .hpp)
     Cpp,
 }
 
@@ -46,7 +48,8 @@ impl Language {
             Language::CSharp => "C#",
             Language::Java => "Java",
             Language::Go => "Go",
-            Language::Cpp => "C/C++",
+            Language::C => "C",
+            Language::Cpp => "C++",
         }
     }
 
@@ -63,6 +66,7 @@ impl Language {
             Language::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
             Language::Java => tree_sitter_java::LANGUAGE.into(),
             Language::Go => tree_sitter_go::LANGUAGE.into(),
+            Language::C => tree_sitter_c::LANGUAGE.into(),
             Language::Cpp => tree_sitter_cpp::LANGUAGE.into(),
         }
     }
@@ -130,7 +134,8 @@ pub fn detect_language(path: impl AsRef<Path>) -> Result<Language> {
         Some("cs") => Ok(Language::CSharp),
         Some("java") => Ok(Language::Java),
         Some("go") => Ok(Language::Go),
-        Some("cpp") | Some("cc") | Some("cxx") | Some("c++") | Some("hpp") | Some("h") => {
+        Some("c") => Ok(Language::C),
+        Some("cpp") | Some("cc") | Some("cxx") | Some("c++") | Some("hpp") | Some("hh") | Some("h") => {
             Ok(Language::Cpp)
         }
         Some(ext) => {

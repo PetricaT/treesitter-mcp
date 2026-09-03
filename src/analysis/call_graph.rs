@@ -479,7 +479,7 @@ fn is_call_node(kind: &str, language: Language) -> bool {
         Language::Python => kind == "call",
         Language::JavaScript | Language::TypeScript | Language::Go => kind == "call_expression",
         Language::Java | Language::CSharp | Language::Swift => kind.ends_with("invocation"),
-        Language::Cpp => kind == "call_expression",
+        Language::C | Language::Cpp => kind == "call_expression",
         Language::Html | Language::Css => false,
     }
 }

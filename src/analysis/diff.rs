@@ -272,7 +272,7 @@ fn extract_symbols(
             // Return empty - structural diff not applicable.
             log::debug!("Structural diff not applicable for {:?}", language);
         }
-        Language::Cpp => {
+        Language::C | Language::Cpp => {
             log::debug!("Structural diff not applicable for C/C++");
         }
     }

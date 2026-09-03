@@ -642,7 +642,7 @@ fn extract_types_from_source(
             // These languages don't have type definitions
             Vec::new()
         }
-        Language::Cpp => Vec::new(),
+        Language::C | Language::Cpp => Vec::new(),
     };
 
     Ok(types)

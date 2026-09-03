@@ -225,6 +225,7 @@ fn process_file_with_source(
     source: &str,
     relative_path: &Path,
     language: SupportedLanguage,
+
     limit: usize,
     result: &mut TypeExtractionResult,
 ) -> Result<()> {
@@ -236,8 +237,8 @@ fn process_file_with_source(
         SupportedLanguage::Java => extract_java_types(source, relative_path)?,
         SupportedLanguage::CSharp => extract_csharp_types(source, relative_path)?,
         SupportedLanguage::Go => extract_go_types(source, relative_path)?,
+        SupportedLanguage::C => extract_c_types(source, relative_path)?,
     };
-
     for ty in file_types {
         result.total_types += 1;
         if result.types.len() < limit {
@@ -295,6 +296,7 @@ enum SupportedLanguage {
     Java,
     CSharp,
     Go,
+    C,
 }
 
 fn detect_language(path: &Path) -> Option<SupportedLanguage> {
@@ -307,6 +309,7 @@ fn detect_language(path: &Path) -> Option<SupportedLanguage> {
         "java" => Some(SupportedLanguage::Java),
         "cs" => Some(SupportedLanguage::CSharp),
         "go" => Some(SupportedLanguage::Go),
+        "c" => Some(SupportedLanguage::C),
         _ => None,
     }
 }
@@ -1507,6 +1510,159 @@ pub(crate) fn extract_go_types(source: &str, relative_path: &Path) -> Result<Vec
         }
 
         definitions.push(def);
+    }
+
+    Ok(definitions)
+}
+
+fn extract_c_types(source: &str, relative_path: &Path) -> Result<Vec<TypeDefinition>> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_c::LANGUAGE.into())
+        .wrap_err("Failed to configure C parser")?;
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| eyre::eyre!("Failed to parse C source"))?;
+
+    let query_src = r#"
+        (struct_specifier name: (type_identifier) @name) @struct
+        (enum_specifier name: (type_identifier) @name) @enum
+        (union_specifier name: (type_identifier) @name) @union
+        (type_definition declarator: (type_identifier) @name) @alias
+        (type_definition declarator: (field_identifier) @name) @alias
+    "#;
+
+    let query = Query::new(&tree_sitter_c::LANGUAGE.into(), query_src)
+        .wrap_err("Failed to compile C query")?;
+
+    let source_bytes = source.as_bytes();
+    let file_path = relative_path.to_path_buf();
+    let mut definitions = Vec::new();
+    let mut cursor = QueryCursor::new();
+    let mut matches = cursor.matches(&query, tree.root_node(), source_bytes);
+
+    while let Some(match_) = matches.next() {
+        let mut name_node = None;
+        let mut def_node = None;
+        let mut kind = TypeKind::Struct;
+
+        for capture in match_.captures {
+            let capture_name = query.capture_names()[capture.index as usize];
+            match capture_name {
+                "name" => name_node = Some(capture.node),
+                "struct" => {
+                    def_node = Some(capture.node);
+                    kind = TypeKind::Struct;
+                }
+                "enum" => {
+                    def_node = Some(capture.node);
+                    kind = TypeKind::Enum;
+                }
+                "union" => {
+                    def_node = Some(capture.node);
+                    kind = TypeKind::Struct;
+                }
+                "alias" => {
+                    def_node = Some(capture.node);
+                    kind = TypeKind::TypeAlias;
+                }
+                _ => {}
+            }
+        }
+
+        let Some(name_node) = name_node else {
+            continue;
+        };
+        let Some(def_node) = def_node else {
+            continue;
+        };
+        let Ok(name) = name_node.utf8_text(source_bytes) else {
+            continue;
+        };
+
+        // Avoid duplicates
+        if definitions.iter().any(|d: &TypeDefinition| d.name == name) {
+            continue;
+        }
+
+        let mut fields = None;
+        let mut variants = None;
+
+        if kind == TypeKind::Struct {
+            if let Some(body) = def_node.child_by_field_name("body") {
+                let mut f = Vec::new();
+                let mut walker = body.walk();
+                for child in body.children(&mut walker) {
+                    if child.kind() == "field_declaration" {
+                        if let Some(type_node) = child.child_by_field_name("type") {
+                            let type_str = type_node.utf8_text(source_bytes).unwrap_or_default();
+                            let mut dwalker = child.walk();
+                            for decl in child.children(&mut dwalker) {
+                                if decl.kind() == "field_identifier" {
+                                    f.push(Field {
+                                        name: decl.utf8_text(source_bytes).unwrap_or_default().to_string(),
+                                        type_annotation: type_str.to_string(),
+                                    });
+                                } else if decl.kind() == "field_declaration" {
+                                    if let Some(n) = decl.child_by_field_name("declarator") {
+                                        f.push(Field {
+                                            name: n.utf8_text(source_bytes).unwrap_or_default().to_string(),
+                                            type_annotation: type_str.to_string(),
+                                        });
+                                    }
+                                }
+                            }
+                            // Fallback: declarator field
+                            if f.is_empty() {
+                                if let Some(decl) = child.child_by_field_name("declarator") {
+                                    if let Ok(n) = decl.utf8_text(source_bytes) {
+                                        if !n.is_empty() && n != ";" {
+                                            f.push(Field {
+                                                name: n.to_string(),
+                                                type_annotation: type_str.to_string(),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if !f.is_empty() {
+                    fields = Some(f);
+                }
+            }
+        } else if kind == TypeKind::Enum {
+            if let Some(body) = def_node.child_by_field_name("body") {
+                let mut v = Vec::new();
+                let mut walker = body.walk();
+                for child in body.children(&mut walker) {
+                    if child.kind() == "enumerator" {
+                        if let Some(n) = child.child_by_field_name("name") {
+                            v.push(Variant {
+                                name: n.utf8_text(source_bytes).unwrap_or_default().to_string(),
+                                type_annotation: None,
+                            });
+                        }
+                    }
+                }
+                if !v.is_empty() {
+                    variants = Some(v);
+                }
+            }
+        }
+
+        definitions.push(TypeDefinition {
+            name: name.to_string(),
+            kind,
+            file: file_path.clone(),
+            line: def_node.start_position().row + 1,
+            signature: signature_for(def_node, source_bytes),
+            usage_count: 0,
+            fields,
+            variants,
+            members: None,
+        });
     }
 
     Ok(definitions)

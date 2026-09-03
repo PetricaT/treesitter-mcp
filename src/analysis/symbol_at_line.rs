@@ -220,6 +220,10 @@ fn is_context_node(node_type: &str, language: Language) -> bool {
                 | "interface_declaration"
                 | "enum_declaration"
         ),
+        Language::C => matches!(
+            node_type,
+            "function_definition" | "struct_specifier" | "enum_specifier" | "type_definition"
+        ),
         Language::Cpp => matches!(
             node_type,
             "function_definition" | "class_specifier" | "struct_specifier" | "namespace_definition"
