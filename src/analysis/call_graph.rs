@@ -82,10 +82,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
     let target_path = PathBuf::from(file_path);
     if !target_path.exists() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Path does not exist: {file_path}"),
-        ));
+        return Err(crate::common::suggest::missing_file_err(file_path));
     }
 
     let root = path_utils::find_project_root(&target_path)

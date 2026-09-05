@@ -77,11 +77,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         .map(|value| value as usize)
         .unwrap_or(2000);
 
-    let source = fs::read_to_string(file_path).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Failed to read file {file_path}: {e}"),
-        )
+    let source = fs::read_to_string(file_path).map_err(|_| {
+        crate::common::suggest::missing_file_err(file_path)
     })?;
     let language = detect_language(file_path).map_err(|e| {
         io::Error::new(
@@ -97,10 +94,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     })?;
     let shape = extract_enhanced_shape(&tree, &source, language, Some(file_path), true)?;
     let target = find_target_symbol(&shape, symbol).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Symbol '{symbol}' not found in {file_path}"),
-        )
+        crate::common::suggest::unknown_symbol_err(symbol, &shape_symbol_names(&shape), file_path)
     })?;
 
     let called_names = collect_called_names(&tree, &source, language, target.line, target.end_line);
@@ -173,6 +167,21 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     })?;
 
     Ok(CallToolResult::success(json_text))
+}
+
+fn shape_symbol_names(shape: &EnhancedFileShape) -> Vec<String> {
+    let mut names: Vec<String> = shape.functions.iter().map(|f| f.name.clone()).collect();
+    names.extend(shape.structs.iter().map(|s| s.name.clone()));
+    for c in &shape.classes {
+        names.push(c.name.clone());
+        names.extend(c.methods.iter().map(|m| m.name.clone()));
+    }
+    for b in &shape.impl_blocks {
+        names.extend(b.methods.iter().map(|m| m.name.clone()));
+    }
+    names.sort();
+    names.dedup();
+    names
 }
 
 fn find_target_symbol(shape: &EnhancedFileShape, symbol: &str) -> Option<TargetSymbol> {

@@ -200,6 +200,26 @@ fn apply_symbol_edit_dry_run() {
 }
 
 #[test]
+fn rich_errors_suggest_files_and_symbols() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    write_tmp(&dir, "src/calculator.rs", "pub fn add() {}\n");
+    let missing = dir.path().join("src").join("calculatr.rs");
+    let err = treesitter_mcp::analysis::view_code::execute(&json!({
+        "file_path": missing.to_str().unwrap(), "detail": "signatures", "include_deps": false
+    }))
+    .unwrap_err();
+    assert!(err.to_string().contains("did you mean"), "got: {err}");
+
+    let f = write_tmp(&dir, "c.rs", "pub fn alpha() {}\n");
+    let err = treesitter_mcp::analysis::apply_edit::execute(&json!({
+        "file_path": f, "symbol_name": "alpa", "new_body": "x", "dry_run": true
+    }))
+    .unwrap_err();
+    assert!(err.to_string().contains("candidates"), "got: {err}");
+}
+
+#[test]
 fn session_bootstrap_finds_entries_and_tests() {
     let dir = TempDir::new().unwrap();
     fs::create_dir_all(dir.path().join("src")).unwrap();

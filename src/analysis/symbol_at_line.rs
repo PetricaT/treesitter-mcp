@@ -47,6 +47,9 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
     log::info!("Getting symbol at {file_path}:{line}:{column}");
 
+    if !std::path::Path::new(file_path).exists() {
+        return Err(crate::common::suggest::missing_file_err(file_path));
+    }
     let source = fs::read_to_string(file_path).map_err(|e| {
         io::Error::new(
             io::ErrorKind::NotFound,

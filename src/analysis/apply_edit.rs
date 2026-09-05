@@ -45,6 +45,9 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     }
     let dry_run = arguments["dry_run"].as_bool().unwrap_or(false);
 
+    if !std::path::Path::new(file_path).exists() {
+        return Err(crate::common::suggest::missing_file_err(file_path));
+    }
     let source = fs::read_to_string(file_path).map_err(|e| {
         io::Error::new(io::ErrorKind::NotFound, format!("read {file_path}: {e}"))
     })?;
@@ -57,10 +60,14 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let shape = extract_enhanced_shape(&tree, &source, language, None, false)?;
 
     let (line, end_line) = find_span(&shape, symbol).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Symbol '{symbol}' not found in {file_path}"),
-        )
+        let mut names: Vec<String> =
+            shape.functions.iter().map(|f| f.name.clone()).collect();
+        names.extend(shape.structs.iter().map(|s| s.name.clone()));
+        for c in &shape.classes {
+            names.push(c.name.clone());
+            names.extend(c.methods.iter().map(|m| m.name.clone()));
+        }
+        crate::common::suggest::unknown_symbol_err(symbol, &names, file_path)
     })?;
 
     let mut lines: Vec<&str> = source.lines().collect();

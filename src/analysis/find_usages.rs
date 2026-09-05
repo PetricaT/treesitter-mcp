@@ -82,7 +82,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     if !path.exists() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Path does not exist: {path_str}"),
+            crate::common::suggest::missing_file_err(path_str).to_string(),
         ));
     }
 
