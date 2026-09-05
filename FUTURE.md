@@ -77,6 +77,12 @@ worked).
   the LSP is unavailable or slower than a timeout.
 - **Proof:** Add a correctness benchmark against a repo with trait/impl resolution. Show
   the hybrid mode matching LSP on recall while still being smaller in token output.
+- **Decision (2026-09-05):** bridge-only. `format_references`,
+  `format_diagnostics`, and `view_code(definition_location=...)` already
+  accept LSP output and format it compactly. No server-managed LSP socket:
+  per-language servers, timeouts, and config complexity violate the
+  "simple tool agents use to write faster code" scope. Revisit only if
+  rename-precision complaints force it.
 
 ### 7. Confidence column surfaced consistently
 
