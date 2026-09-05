@@ -186,6 +186,27 @@ fn estimate_preview_search_and_usages() {
 }
 
 #[test]
+fn call_path_and_cycles() {
+    let dir = TempDir::new().unwrap();
+    let f = write_tmp(
+        &dir,
+        "a.py",
+        "def a():\n    b()\ndef b():\n    c()\ndef c():\n    pass\ndef rec(n):\n    return rec(n - 1)\n",
+    );
+    std::process::Command::new("git").arg("init").current_dir(dir.path()).output().ok();
+    let args = json!({"file_path": f, "symbol": "a", "to": "c"});
+    let r = treesitter_mcp::analysis::call_path::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    assert_eq!(v["reachable"], true);
+    assert!(v["chain"].as_str().unwrap().contains("b"));
+
+    let args = json!({"file_path": f, "symbol_name": "rec", "direction": "callees"});
+    let r = treesitter_mcp::analysis::call_graph::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    assert!(v["cycles"].as_str().unwrap().contains("rec -> rec"));
+}
+
+#[test]
 fn find_usages_paging_total_offset() {
     let dir = TempDir::new().unwrap();
     let f = write_tmp(&dir, "a.py", "x = 1\nprint(x)\nprint(x)\n");

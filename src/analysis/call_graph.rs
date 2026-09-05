@@ -31,12 +31,12 @@ enum Direction {
 }
 
 #[derive(Debug, Clone)]
-struct SymbolDef {
-    name: String,
-    file: PathBuf,
-    line: usize,
-    end_line: usize,
-    scope: String,
+pub(crate) struct SymbolDef {
+    pub(crate) name: String,
+    pub(crate) file: PathBuf,
+    pub(crate) line: usize,
+    pub(crate) end_line: usize,
+    pub(crate) scope: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -169,12 +169,14 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     } else {
         edge_rows_with_budget(&edges, symbol, max_tokens)?
     };
+    let cycles = detect_cycles(&target, &definitions);
     let mut result = json!({
         "sym": symbol,
         "h": header,
         "edges": rows,
         "total": total,
         "offset": offset,
+        "cycles": cycles.join("\n"),
     });
     if truncated {
         result["@"] = json!({"t": true});
@@ -202,14 +204,14 @@ fn parse_direction(value: &str) -> Result<Direction, io::Error> {
     }
 }
 
-fn collect_supported_files(root: &Path) -> Result<Vec<PathBuf>, io::Error> {
+pub(crate) fn collect_supported_files(root: &Path) -> Result<Vec<PathBuf>, io::Error> {
     Ok(collect_project_files(root)?
         .into_iter()
         .filter(|path| detect_language(path).is_ok())
         .collect())
 }
 
-fn collect_definitions(files: &[PathBuf]) -> Result<Vec<SymbolDef>, io::Error> {
+pub(crate) fn collect_definitions(files: &[PathBuf]) -> Result<Vec<SymbolDef>, io::Error> {
     let mut definitions = Vec::new();
     for file in files {
         let Ok((shape, _tree, _source, _language)) = parse_shape(file) else {
@@ -220,7 +222,7 @@ fn collect_definitions(files: &[PathBuf]) -> Result<Vec<SymbolDef>, io::Error> {
     Ok(definitions)
 }
 
-fn parse_shape(path: &Path) -> Result<(EnhancedFileShape, Tree, String, Language), io::Error> {
+pub(crate) fn parse_shape(path: &Path) -> Result<(EnhancedFileShape, Tree, String, Language), io::Error> {
     let language = detect_language(path).map_err(|e| {
         io::Error::new(
             io::ErrorKind::Unsupported,
@@ -285,7 +287,7 @@ fn def_from_method(file: &Path, method: &MethodInfo, scope: &str) -> SymbolDef {
     }
 }
 
-fn find_target_definition(
+pub(crate) fn find_target_definition(
     definitions: &[SymbolDef],
     file_path: &Path,
     symbol: &str,
@@ -367,7 +369,7 @@ fn collect_caller_edges(
     Ok(())
 }
 
-fn called_names_for_symbol(symbol: &SymbolDef) -> Result<HashSet<String>, io::Error> {
+pub(crate) fn called_names_for_symbol(symbol: &SymbolDef) -> Result<HashSet<String>, io::Error> {
     let (_shape, tree, source, language) = parse_shape(&symbol.file)?;
     Ok(collect_called_names(
         &tree,
@@ -407,7 +409,7 @@ fn callers_for_symbol(
     Ok(callers)
 }
 
-fn resolve_definition(
+pub(crate) fn resolve_definition(
     definitions: &[SymbolDef],
     name: &str,
     current_file: &Path,
@@ -802,6 +804,42 @@ fn caller_body_has_loop(tree: &Tree, source: &str, caller_line: usize) -> bool {
         }
     }
     false
+}
+
+/// Cycle detection: self-recursion plus 2-cycles (A→B→A).
+/// Best-effort on the project-local resolver; longer cycles are
+/// covered by the `call_path` tool (self-path query).
+fn detect_cycles(target: &SymbolDef, definitions: &[SymbolDef]) -> Vec<String> {
+    let mut cycles = Vec::new();
+    let Ok(called) = called_names_for_symbol(target) else {
+        return cycles;
+    };
+    // Self-recursion.
+    if called.contains(&target.name)
+        && resolve_definition(definitions, &target.name, &target.file)
+            .map(|d| d.file == target.file && d.line == target.line)
+            .unwrap_or(false)
+    {
+        cycles.push(format!("{} -> {}", target.name, target.name));
+    }
+    // 2-cycles: target → C → target.
+    for name in &called {
+        let Some(callee) = resolve_definition(definitions, name, &target.file) else {
+            continue;
+        };
+        if callee.file == target.file && callee.line == target.line {
+            continue; // self, already reported
+        }
+        let Ok(back) = called_names_for_symbol(&callee) else {
+            continue;
+        };
+        if back.contains(&target.name) {
+            cycles.push(format!("{} -> {} -> {}", target.name, name, target.name));
+        }
+    }
+    cycles.sort();
+    cycles.dedup();
+    cycles
 }
 
 fn edge_rows(edges: &[Edge]) -> String {

@@ -8,7 +8,7 @@ use rust_mcp_sdk::schema::{schema_utils::CallToolError, CallToolResult};
 use rust_mcp_sdk::tool_box;
 
 use crate::analysis::{
-    arg_flow, batch, call_graph, code_map, depends, diff, find_usages, find_writes,
+    arg_flow, batch, call_graph, call_path, code_map, depends, diff, find_usages, find_writes,
     format_diagnostics, format_references, minimal_edit_context, query_pattern, relevant_tests,
     review_context, search_text, symbol_at_line, verify_edit, view_code,
 };
@@ -867,6 +867,36 @@ impl DependsOn {
     }
 }
 
+/// Call path: does A transitively call B (cycles via self-path).
+#[mcp_tool(
+    name = "call_path",
+    description = "Check whether symbol A transitively calls symbol B (BFS over project-local callee edges, depth max 5). Self-path (to==from) reports recursion cycles. Returns `reachable` plus `chain` (symbol@file:line rows)."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct CallPath {
+    /// File containing the source symbol
+    pub file_path: String,
+    /// Source symbol
+    pub symbol: String,
+    /// Destination symbol
+    pub to: String,
+    /// Max depth (default 5, max 5)
+    #[serde(default)]
+    pub depth: Option<u32>,
+}
+
+impl CallPath {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "symbol": self.symbol,
+            "to": self.to,
+            "depth": self.depth
+        });
+        call_path::execute(&args).map_err(CallToolError::new)
+    }
+}
+
 /// Transitive argument dataflow (bounded, same-file).
 #[mcp_tool(
     name = "arg_flow",
@@ -927,6 +957,7 @@ tool_box!(
         FindWrites,
         BatchView,
         DependsOn,
-        ArgFlow
+        ArgFlow,
+        CallPath
     ]
 );

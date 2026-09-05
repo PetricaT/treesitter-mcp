@@ -76,6 +76,7 @@ impl ServerHandler for TreesitterServerHandler {
             TreesitterTools::BatchView(t) => t.call_tool(),
             TreesitterTools::DependsOn(t) => t.call_tool(),
             TreesitterTools::ArgFlow(t) => t.call_tool(),
+            TreesitterTools::CallPath(t) => t.call_tool(),
         }
     }
 }

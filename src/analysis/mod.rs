@@ -2,6 +2,7 @@ pub mod arg_flow;
 pub mod askama;
 pub mod batch;
 pub mod call_graph;
+pub mod call_path;
 pub mod code_map;
 pub mod dependencies;
 pub mod depends;
