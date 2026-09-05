@@ -52,6 +52,7 @@ pub fn map_hint(files: usize, truncated: bool) -> String {
 }
 
 /// Hint after an edit-related response.
+#[allow(dead_code)]
 pub fn edit_hint() -> String {
     "verify with parse_diff then affected_by_diff before tests".to_string()
 }

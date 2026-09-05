@@ -8,9 +8,9 @@ use rust_mcp_sdk::schema::{schema_utils::CallToolError, CallToolResult};
 use rust_mcp_sdk::tool_box;
 
 use crate::analysis::{
-    arg_flow, batch, call_graph, call_path, code_map, depends, diff, find_usages, find_writes,
-    format_diagnostics, format_references, minimal_edit_context, query_pattern, relevant_tests,
-    review_context, search_text, symbol_at_line, verify_edit, view_code,
+    apply_edit, arg_flow, batch, call_graph, call_path, code_map, depends, diff, find_usages,
+    find_writes, format_diagnostics, format_references, minimal_edit_context, query_pattern,
+    relevant_tests, review_context, search_text, symbol_at_line, verify_edit, view_code,
 };
 
 // Helper function for serde default
@@ -867,6 +867,36 @@ impl DependsOn {
     }
 }
 
+/// Splice a replacement body over one symbol's AST span.
+#[mcp_tool(
+    name = "apply_symbol_edit",
+    description = "Replace one symbol's code by splicing new_body over its AST line span. Verifies the file still parses. Pass dry_run=true to preview without writing. Returns replaced_lines and parses flag."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct ApplySymbolEdit {
+    /// File path
+    pub file_path: String,
+    /// Symbol to replace
+    pub symbol_name: String,
+    /// Replacement code block
+    pub new_body: String,
+    /// Preview without writing (default false)
+    #[serde(default)]
+    pub dry_run: Option<bool>,
+}
+
+impl ApplySymbolEdit {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "symbol_name": self.symbol_name,
+            "new_body": self.new_body,
+            "dry_run": self.dry_run
+        });
+        apply_edit::execute(&args).map_err(CallToolError::new)
+    }
+}
+
 /// Call path: does A transitively call B (cycles via self-path).
 #[mcp_tool(
     name = "call_path",
@@ -958,6 +988,7 @@ tool_box!(
         BatchView,
         DependsOn,
         ArgFlow,
-        CallPath
+        CallPath,
+        ApplySymbolEdit
     ]
 );

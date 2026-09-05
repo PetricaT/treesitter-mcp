@@ -186,6 +186,20 @@ fn estimate_preview_search_and_usages() {
 }
 
 #[test]
+fn apply_symbol_edit_dry_run() {
+    let dir = TempDir::new().unwrap();
+    let f = write_tmp(&dir, "a.py", "def foo():\n    return 1\n");
+    let args = json!({"file_path": f, "symbol_name": "foo", "new_body": "def foo():\n    return 2", "dry_run": true});
+    let r = treesitter_mcp::analysis::apply_edit::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    assert_eq!(v["sym"], "foo");
+    assert_eq!(v["dry_run"], true);
+    assert_eq!(v["parses"], true);
+    // file untouched in dry run
+    assert!(fs::read_to_string(dir.path().join("a.py")).unwrap().contains("return 1"));
+}
+
+#[test]
 fn call_path_and_cycles() {
     let dir = TempDir::new().unwrap();
     let f = write_tmp(

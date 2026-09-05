@@ -1,3 +1,4 @@
+pub mod apply_edit;
 pub mod arg_flow;
 pub mod askama;
 pub mod batch;
