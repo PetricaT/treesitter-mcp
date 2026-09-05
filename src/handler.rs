@@ -78,6 +78,7 @@ impl ServerHandler for TreesitterServerHandler {
             TreesitterTools::ArgFlow(t) => t.call_tool(),
             TreesitterTools::CallPath(t) => t.call_tool(),
             TreesitterTools::ApplySymbolEdit(t) => t.call_tool(),
+            TreesitterTools::SessionBootstrap(t) => t.call_tool(),
         }
     }
 }

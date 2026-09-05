@@ -200,6 +200,21 @@ fn apply_symbol_edit_dry_run() {
 }
 
 #[test]
+fn session_bootstrap_finds_entries_and_tests() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    write_tmp(&dir, "src/main.rs", "fn main() {}\n");
+    let tdir = dir.path().join("tests");
+    fs::create_dir_all(&tdir).unwrap();
+    fs::write(tdir.join("t.py"), "def test_x():\n    pass\n").unwrap();
+    let args = json!({"path": dir.path().to_str().unwrap()});
+    let r = treesitter_mcp::analysis::bootstrap::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    assert!(v["entry_points"].as_str().unwrap().contains("main.rs"));
+    assert!(v["test_dirs"].as_str().unwrap().contains("tests"));
+}
+
+#[test]
 fn call_path_and_cycles() {
     let dir = TempDir::new().unwrap();
     let f = write_tmp(

@@ -8,9 +8,10 @@ use rust_mcp_sdk::schema::{schema_utils::CallToolError, CallToolResult};
 use rust_mcp_sdk::tool_box;
 
 use crate::analysis::{
-    apply_edit, arg_flow, batch, call_graph, call_path, code_map, depends, diff, find_usages,
-    find_writes, format_diagnostics, format_references, minimal_edit_context, query_pattern,
-    relevant_tests, review_context, search_text, symbol_at_line, verify_edit, view_code,
+    apply_edit, arg_flow, batch, bootstrap, call_graph, call_path, code_map, depends, diff,
+    find_usages, find_writes, format_diagnostics, format_references, minimal_edit_context,
+    query_pattern, relevant_tests, review_context, search_text, symbol_at_line, verify_edit,
+    view_code,
 };
 
 // Helper function for serde default
@@ -897,6 +898,30 @@ impl ApplySymbolEdit {
     }
 }
 
+/// Session bootstrap: types + minimal map + entries + tests in one call.
+#[mcp_tool(
+    name = "session_bootstrap",
+    description = "Orient a new session in one call: top types, minimal code map, likely entry points (main/lib/index), test dirs. Returns `types`, `map`, `entry_points`, `test_dirs`."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct SessionBootstrap {
+    /// Directory to scan
+    pub path: String,
+    /// Shared budget (default 3000)
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
+impl SessionBootstrap {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "path": self.path,
+            "max_tokens": self.max_tokens
+        });
+        bootstrap::execute(&args).map_err(CallToolError::new)
+    }
+}
+
 /// Call path: does A transitively call B (cycles via self-path).
 #[mcp_tool(
     name = "call_path",
@@ -989,6 +1014,7 @@ tool_box!(
         DependsOn,
         ArgFlow,
         CallPath,
-        ApplySymbolEdit
+        ApplySymbolEdit,
+        SessionBootstrap
     ]
 );
