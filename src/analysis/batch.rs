@@ -39,11 +39,14 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let mut truncated = false;
 
     for (idx, item) in items.iter().enumerate() {
+        // NOTE: check as_str, not get().is_some() — MCP clients send
+        // explicit nulls for absent optionals, and get() is Some for null.
         let is_usages = item
             .get("kind")
             .and_then(Value::as_str)
             .is_some_and(|k| k == "usages")
-            || (item.get("symbol").is_some() && item.get("path").is_some());
+            || (item.get("symbol").and_then(Value::as_str).is_some()
+                && item.get("path").and_then(Value::as_str).is_some());
 
         if is_usages {
             let symbol = item["symbol"].as_str().ok_or_else(|| {
@@ -95,7 +98,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
             }
             if let Some(iso) = item.get("isolate").and_then(Value::as_bool) {
                 args.insert("isolate".to_string(), json!(iso));
-            } else if item.get("focus_symbol").is_some() {
+            } else if item.get("focus_symbol").and_then(Value::as_str).is_some() {
                 // Default isolate=true in batch: the whole point is to avoid
                 // paying for the whole file per symbol.
                 args.insert("isolate".to_string(), json!(true));
@@ -104,13 +107,14 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
                 args.insert("comment_mode".to_string(), json!(c));
             }
             // Keep batch payloads lean: no cross-file deps per item by default.
-            if !item.get("include_deps").is_some() {
-                args.insert("include_deps".to_string(), json!(false));
-            } else {
-                args.insert(
-                    "include_deps".to_string(),
-                    item["include_deps"].clone(),
-                );
+            // (Explicit null counts as absent here too.)
+            match item.get("include_deps").and_then(Value::as_bool) {
+                Some(v) => {
+                    args.insert("include_deps".to_string(), json!(v));
+                }
+                None => {
+                    args.insert("include_deps".to_string(), json!(false));
+                }
             }
 
             let key = match item.get("focus_symbol").and_then(Value::as_str) {
