@@ -71,6 +71,11 @@ impl ServerHandler for TreesitterServerHandler {
             TreesitterTools::ReviewContext(t) => t.call_tool(),
             TreesitterTools::TemplateContext(t) => t.call_tool(),
             TreesitterTools::TypeMap(t) => t.call_tool(),
+            TreesitterTools::SearchText(t) => t.call_tool(),
+            TreesitterTools::FindWrites(t) => t.call_tool(),
+            TreesitterTools::BatchView(t) => t.call_tool(),
+            TreesitterTools::DependsOn(t) => t.call_tool(),
+            TreesitterTools::ArgFlow(t) => t.call_tool(),
         }
     }
 }

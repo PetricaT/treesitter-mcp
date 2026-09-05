@@ -218,6 +218,10 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
     let detail = DetailLevel::from_args(arguments);
     let focus_symbol = arguments.get("focus_symbol").and_then(Value::as_str);
+    let isolate = arguments
+        .get("isolate")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let comment_mode = parse_comment_mode(arguments);
 
     // Back-compat: tests pass include_deps without tool schema.
@@ -274,7 +278,11 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     )?;
 
     if let Some(symbol) = focus_symbol {
-        apply_focus(&mut main_shape, symbol);
+        if isolate {
+            apply_isolate(&mut main_shape, symbol);
+        } else {
+            apply_focus(&mut main_shape, symbol);
+        }
     }
     apply_comment_mode(&mut main_shape, &source, language, comment_mode);
 
@@ -1392,6 +1400,53 @@ fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
     }
 
     paths.push(path);
+}
+
+/// Isolate: keep ONLY the target symbol rows, drop everything else.
+/// Unlike `apply_focus` (code-only for target, signatures for rest),
+/// this returns just the target so agents don't pay for the whole file.
+fn apply_isolate(shape: &mut EnhancedFileShape, focus_symbol: &str) {
+    shape.functions.retain(|f| f.name == focus_symbol);
+    shape.structs.retain(|s| s.name == focus_symbol);
+    shape.properties.retain(|p| p.name == focus_symbol);
+    shape.interfaces.retain(|i| {
+        i.name == focus_symbol || i.methods.iter().any(|m| m.name == focus_symbol)
+    });
+    for i in &mut shape.interfaces {
+        if i.name != focus_symbol {
+            i.methods.retain(|m| m.name == focus_symbol);
+        }
+    }
+    shape.classes.retain(|c| {
+        c.name == focus_symbol || c.methods.iter().any(|m| m.name == focus_symbol)
+    });
+    for c in &mut shape.classes {
+        if c.name != focus_symbol {
+            c.methods.retain(|m| m.name == focus_symbol);
+        }
+    }
+    shape.traits.retain(|t| {
+        t.name == focus_symbol || t.methods.iter().any(|m| m.name == focus_symbol)
+    });
+    for t in &mut shape.traits {
+        if t.name != focus_symbol {
+            t.methods.retain(|m| m.name == focus_symbol);
+        }
+    }
+    shape.impl_blocks.retain(|b| {
+        b.type_name == focus_symbol
+            || b.trait_name.as_deref() == Some(focus_symbol)
+            || b.methods.iter().any(|m| m.name == focus_symbol)
+    });
+    for b in &mut shape.impl_blocks {
+        if b.type_name != focus_symbol {
+            b.methods.retain(|m| m.name == focus_symbol);
+        }
+    }
+    // Imports/deps are handled downstream via focus-aware referenced-type
+    // collection; clearing here would break relevant-import filtering, so
+    // keep shape.imports intact — tables for non-matching symbols are
+    // already empty and serialize to nothing.
 }
 
 /// Apply focus to show full code only for the specified symbol

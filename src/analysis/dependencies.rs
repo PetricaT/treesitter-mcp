@@ -29,8 +29,67 @@ pub fn resolve_dependencies(
             find_js_ts_dependencies(source, file_path, project_root)
         }
         Language::Go => find_go_dependencies(source, file_path, project_root),
+        Language::C | Language::Cpp => find_c_cpp_dependencies(source, file_path, project_root),
         _ => vec![],
     }
+}
+
+/// For C/C++ files, resolve quoted `#include "file.h"` to project files.
+///
+/// Quoted includes resolve relative to the including file's directory first,
+/// then relative to the project root. Angle-bracket `<...>` includes are
+/// system headers and skipped. Returns canonical project-local paths only.
+pub fn find_c_cpp_dependencies(
+    source: &str,
+    file_path: &Path,
+    project_root: &Path,
+) -> Vec<PathBuf> {
+    let mut deps = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let dir = file_path.parent().unwrap_or(project_root);
+
+    for line in source.lines() {
+        let t = line.trim_start();
+        let Some(rest) = t.strip_prefix("#") else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let Some(rest) = rest.strip_prefix("include") else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        if let Some(quoted) = rest.strip_prefix('"').and_then(|r| r.split('"').next()) {
+            if quoted.is_empty() {
+                continue;
+            }
+            let rel = Path::new(quoted);
+            // Relative to including file.
+            let cand = dir.join(rel);
+            if cand.is_file() {
+                let canon =
+                    fs::canonicalize(&cand).unwrap_or_else(|_| cand.clone());
+                if canon.starts_with(
+                    fs::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf()),
+                ) && seen.insert(canon.clone())
+                {
+                    deps.push(cand);
+                    continue;
+                }
+            }
+            // Relative to project root.
+            let cand = project_root.join(rel);
+            if cand.is_file() {
+                let canon =
+                    fs::canonicalize(&cand).unwrap_or_else(|_| cand.clone());
+                if seen.insert(canon) {
+                    deps.push(cand);
+                }
+            }
+        }
+        // `<...>` system includes intentionally skipped.
+    }
+
+    deps
 }
 
 /// For Rust files, find file dependencies that live in this project.

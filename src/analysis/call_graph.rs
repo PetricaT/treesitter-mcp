@@ -19,6 +19,7 @@ use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code, Language};
 
 const EDGE_HEADER: &str = "direction|symbol|file|line|scope|depth";
+const RANKED_HEADER: &str = "direction|symbol|file|line|scope|depth|freq|hints";
 const DEFAULT_MAX_TOKENS: usize = 2000;
 const MAX_DEPTH: usize = 3;
 
@@ -75,6 +76,9 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         .as_u64()
         .map(|value| value as usize)
         .unwrap_or(DEFAULT_MAX_TOKENS);
+    let rank = arguments["rank"].as_bool().unwrap_or(false);
+    let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
+    let limit = arguments["limit"].as_u64().map(|v| v as usize);
 
     let target_path = PathBuf::from(file_path);
     if !target_path.exists() {
@@ -114,12 +118,31 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
             .then_with(|| a.scope.cmp(&b.scope))
     });
     edges.dedup();
+    let total = edges.len();
+    let edges: Vec<Edge> = {
+        let it = edges.into_iter().skip(offset);
+        match limit {
+            Some(n) => it.take(n).collect(),
+            None => it.collect(),
+        }
+    };
 
-    let (rows, truncated) = edge_rows_with_budget(&edges, symbol, max_tokens)?;
+    let header = if rank {
+        RANKED_HEADER
+    } else {
+        EDGE_HEADER
+    };
+    let (rows, truncated) = if rank {
+        ranked_rows_with_budget(&edges, &target, symbol, max_tokens)?
+    } else {
+        edge_rows_with_budget(&edges, symbol, max_tokens)?
+    };
     let mut result = json!({
         "sym": symbol,
-        "h": EDGE_HEADER,
+        "h": header,
         "edges": rows,
+        "total": total,
+        "offset": offset,
     });
     if truncated {
         result["@"] = json!({"t": true});
@@ -559,6 +582,200 @@ fn edge_rows_with_budget(
         }
         truncated = true;
     }
+}
+
+/// Ranked rows: callers sorted by freq desc, each with freq + hints.
+/// Hints are cheap heuristics: `loop` (caller body has loop node),
+/// `signal` (name/scope looks like signal/slot/callback), `ctor`
+/// (constructor/init), `thread` (thread/async/task/ui tokens).
+fn ranked_rows_with_budget(
+    edges: &[Edge],
+    target: &SymbolDef,
+    symbol: &str,
+    max_tokens: usize,
+) -> Result<(String, bool), io::Error> {
+    let mut ranked: Vec<(Edge, usize, String)> = edges
+        .iter()
+        .map(|e| {
+            let (freq, hints) = if e.direction == "caller" {
+                caller_freq_hints(e, &target.name)
+            } else {
+                (1, String::new())
+            };
+            (e.clone(), freq, hints)
+        })
+        .collect();
+    ranked.sort_by(|a, b| {
+        // Callers first by freq desc, then depth/file/line; callees by depth.
+        let ad = if a.0.direction == "caller" { 0 } else { 1 };
+        let bd = if b.0.direction == "caller" { 0 } else { 1 };
+        ad.cmp(&bd)
+            .then_with(|| b.1.cmp(&a.1))
+            .then_with(|| a.0.depth.cmp(&b.0.depth))
+            .then_with(|| a.0.file.cmp(&b.0.file))
+            .then_with(|| a.0.line.cmp(&b.0.line))
+    });
+
+    let bpe = cl100k_base()
+        .map_err(|e| io::Error::other(format!("tokenizer: {e}")))?;
+    let mut kept = ranked;
+    let mut truncated = false;
+    loop {
+        let rows = kept
+            .iter()
+            .map(|(e, freq, hints)| {
+                format::format_row(&[
+                    e.direction,
+                    &e.symbol,
+                    &e.file,
+                    &e.line.to_string(),
+                    &e.scope,
+                    &e.depth.to_string(),
+                    &freq.to_string(),
+                    hints,
+                ])
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut candidate = json!({
+            "sym": symbol,
+            "h": RANKED_HEADER,
+            "edges": rows,
+        });
+        if truncated {
+            candidate["@"] = json!({"t": true});
+        }
+        let text = serde_json::to_string(&candidate).map_err(|e| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("serialize: {e}"))
+        })?;
+        if bpe.encode_with_special_tokens(&text).len() <= max_tokens {
+            return Ok((rows, truncated));
+        }
+        if kept.pop().is_none() {
+            return Ok((String::new(), true));
+        }
+        truncated = true;
+    }
+}
+
+fn caller_freq_hints(edge: &Edge, target_name: &str) -> (usize, String) {
+    let path = PathBuf::from(&edge.file);
+    // Resolve relative edge.file against cwd/project root best-effort.
+    let candidates = [
+        path.clone(),
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(&edge.file),
+    ];
+    let mut freq = 1usize;
+    let mut hints: Vec<&str> = Vec::new();
+    let name_lc = edge.symbol.to_lowercase();
+    let scope_lc = edge.scope.to_lowercase();
+
+    if name_lc.contains("on_")
+        || name_lc.contains("signal")
+        || name_lc.contains("slot")
+        || name_lc.contains("connect")
+        || name_lc.contains("emit")
+        || name_lc.contains("callback")
+        || scope_lc.contains("signal")
+    {
+        hints.push("signal");
+    }
+    if name_lc == "new"
+        || name_lc.contains("ctor")
+        || name_lc.contains("__init__")
+        || name_lc.contains("constructor")
+    {
+        hints.push("ctor");
+    }
+    if name_lc.contains("thread")
+        || name_lc.contains("spawn")
+        || name_lc.contains("async")
+        || name_lc.contains("task")
+        || scope_lc.contains("thread")
+    {
+        hints.push("thread");
+    }
+
+    for cand in candidates {
+        if let Ok(source) = fs::read_to_string(&cand) {
+            // freq: count textual call occurrences in file (cheap proxy).
+            freq = source.matches(target_name).count().max(1);
+            // loop: look for loop keywords in caller body slice.
+            if let Ok(language) = crate::parser::detect_language(&cand) {
+                if let Ok(tree) = crate::parser::parse_code(&source, language) {
+                    if caller_body_has_loop(&tree, &source, edge.line) {
+                        hints.push("loop");
+                    }
+                }
+            } else if source.contains("for ")
+                || source.contains("while ")
+                || source.contains("loop ")
+            {
+                hints.push("loop");
+            }
+            break;
+        }
+    }
+
+    hints.sort();
+    hints.dedup();
+    (freq, hints.join(","))
+}
+
+fn caller_body_has_loop(tree: &Tree, source: &str, caller_line: usize) -> bool {
+    // Find the innermost function-like node containing caller_line,
+    // then check its subtree for loop nodes.
+    let row = caller_line.saturating_sub(1);
+    let mut best: Option<Node> = None;
+    let mut stack = vec![tree.root_node()];
+    while let Some(n) = stack.pop() {
+        let k = n.kind();
+        if (k.contains("function")
+            || k.contains("method")
+            || k.contains("closure")
+            || k == "call")
+            && n.start_position().row <= row
+            && row <= n.end_position().row
+        {
+            // Prefer smallest containing node.
+            if best
+                .map(|b: Node| {
+                    (n.end_position().row - n.start_position().row)
+                        < (b.end_position().row - b.start_position().row)
+                })
+                .unwrap_or(true)
+            {
+                best = Some(n);
+            }
+        }
+        let mut c = n.walk();
+        for child in n.named_children(&mut c) {
+            stack.push(child);
+        }
+    }
+    if let Some(func) = best {
+        let mut s = vec![func];
+        while let Some(n) = s.pop() {
+            let k = n.kind();
+            if k.contains("for_")
+                || k == "for_statement"
+                || k == "for_clause"
+                || k.contains("while")
+                || k.contains("loop")
+                || k == "for_in_clause"
+            {
+                return true;
+            }
+            let _ = source;
+            let mut c = n.walk();
+            for child in n.named_children(&mut c) {
+                s.push(child);
+            }
+        }
+    }
+    false
 }
 
 fn edge_rows(edges: &[Edge]) -> String {

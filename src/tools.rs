@@ -8,9 +8,9 @@ use rust_mcp_sdk::schema::{schema_utils::CallToolError, CallToolResult};
 use rust_mcp_sdk::tool_box;
 
 use crate::analysis::{
-    call_graph, code_map, diff, find_usages, format_diagnostics, format_references,
-    minimal_edit_context, query_pattern, relevant_tests, review_context, symbol_at_line,
-    verify_edit, view_code,
+    arg_flow, batch, call_graph, code_map, depends, diff, find_usages, find_writes,
+    format_diagnostics, format_references, minimal_edit_context, query_pattern, relevant_tests,
+    review_context, search_text, symbol_at_line, verify_edit, view_code,
 };
 
 // Helper function for serde default
@@ -42,6 +42,11 @@ pub struct ViewCode {
     /// When set, returns full code for this symbol + signatures for rest
     #[serde(default)]
     pub focus_symbol: Option<String>,
+
+    /// Optional: isolate=true returns ONLY the focus symbol rows.
+    /// Use when focus_symbol still returns the whole file.
+    #[serde(default)]
+    pub isolate: Option<bool>,
 
     /// Optional LSP or compact definition location for exact dependency type selection.
     #[serde(default)]
@@ -103,6 +108,12 @@ pub struct FindUsages {
     /// truncated by dropping code/context and/or truncating usages.
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// Paging offset over total matches (default 0).
+    #[serde(default)]
+    pub offset: Option<u32>,
+    /// Paging limit over total matches.
+    #[serde(default)]
+    pub limit: Option<u32>,
 }
 
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
@@ -254,6 +265,15 @@ pub struct CallGraph {
     /// Maximum tokens for output (default: 2000)
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// Rank callers by freq desc with freq|hints columns (loop/signal/ctor/thread).
+    #[serde(default)]
+    pub rank: Option<bool>,
+    /// Paging offset over total edges.
+    #[serde(default)]
+    pub offset: Option<u32>,
+    /// Paging limit over total edges.
+    #[serde(default)]
+    pub limit: Option<u32>,
 }
 
 /// Get symbol information at a specific line with signature and scope chain
@@ -397,6 +417,7 @@ impl ViewCode {
             "file_path": self.file_path,
             "detail": self.detail,
             "focus_symbol": self.focus_symbol,
+            "isolate": self.isolate,
             "definition_location": self.definition_location
         });
 
@@ -426,7 +447,9 @@ impl FindUsages {
             "path": self.path,
             "context_lines": self.context_lines,
             "max_context_lines": self.max_context_lines,
-            "max_tokens": self.max_tokens
+            "max_tokens": self.max_tokens,
+            "offset": self.offset,
+            "limit": self.limit
         });
 
         find_usages::execute(&args).map_err(CallToolError::new)
@@ -476,7 +499,10 @@ impl CallGraph {
             "symbol_name": self.symbol_name,
             "direction": self.direction,
             "depth": self.depth,
-            "max_tokens": self.max_tokens
+            "max_tokens": self.max_tokens,
+            "rank": self.rank,
+            "offset": self.offset,
+            "limit": self.limit
         });
 
         call_graph::execute(&args).map_err(CallToolError::new)
@@ -652,6 +678,192 @@ impl TypeMap {
     }
 }
 
+/// Text/pattern search with compact schema. Finds string literals, hook keys,
+/// error messages, macro names — anything find_usages cannot see.
+#[mcp_tool(
+    name = "search_text",
+    description = "Search literal substring or regex across files. Output keys: `pat`, `h` (`file|line|col|context` or `pattern|file|line|col|context` for multi), `m`, `total`, `offset`, optional `@.t`. USE WHEN: string literals, config keys, error messages, macro names, lint scans. Pass `patterns[]` for one-pass lint."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct SearchText {
+    /// File or directory to search
+    pub path: String,
+    /// Single literal/regex pattern
+    #[serde(default)]
+    pub pattern: Option<String>,
+    /// Multiple patterns (lint mode)
+    #[serde(default)]
+    pub patterns: Option<Vec<String>>,
+    /// Treat pattern as regex (default false)
+    #[serde(default)]
+    pub regex: Option<bool>,
+    /// Case sensitive (default true)
+    #[serde(default)]
+    pub case_sensitive: Option<bool>,
+    /// Context lines around match (default 0)
+    #[serde(default)]
+    pub context_lines: Option<u32>,
+    /// Paging offset (default 0)
+    #[serde(default)]
+    pub offset: Option<u32>,
+    /// Paging limit
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Max tokens budget
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
+impl SearchText {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let mut args = serde_json::json!({
+            "path": self.path,
+            "regex": self.regex,
+            "case_sensitive": self.case_sensitive,
+            "context_lines": self.context_lines,
+            "offset": self.offset,
+            "limit": self.limit,
+            "max_tokens": self.max_tokens
+        });
+        if let Some(p) = &self.pattern {
+            args["pattern"] = serde_json::json!(p);
+        }
+        if let Some(ps) = &self.patterns {
+            args["patterns"] = serde_json::json!(ps);
+        }
+        search_text::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+/// Find where a symbol gets assigned (writes only).
+#[mcp_tool(
+    name = "find_writes",
+    description = "Find assignment/write sites of a symbol. Same schema as find_usages plus `total`/`offset`, but `type=write`. USE WHEN: tracing state flow, 'where does this member get set?'."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct FindWrites {
+    /// Symbol name
+    pub symbol: String,
+    /// File or directory to search
+    pub path: String,
+    /// Context lines (default 3)
+    #[serde(default)]
+    pub context_lines: Option<u32>,
+    /// Max tokens budget
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    /// Paging offset
+    #[serde(default)]
+    pub offset: Option<u32>,
+    /// Paging limit
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+impl FindWrites {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "symbol": self.symbol,
+            "path": self.path,
+            "context_lines": self.context_lines,
+            "max_tokens": self.max_tokens,
+            "offset": self.offset,
+            "limit": self.limit
+        });
+        find_writes::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+/// Batch fetch multiple files/symbols in one call.
+#[mcp_tool(
+    name = "batch_view",
+    description = "Fetch multiple {file_path, focus_symbol?, detail?} in one call. Returns `items` map keyed `file::symbol` with nested view_code payloads. Batch defaults isolate=true for focused items."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct BatchView {
+    /// Items to fetch
+    pub items: Vec<BatchItem>,
+    /// Shared max tokens (default 4000)
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct BatchItem {
+    /// File path
+    pub file_path: String,
+    /// Optional focus symbol
+    #[serde(default)]
+    pub focus_symbol: Option<String>,
+    /// Optional detail
+    #[serde(default)]
+    pub detail: Option<String>,
+}
+
+impl BatchView {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "items": self.items,
+            "max_tokens": self.max_tokens
+        });
+        batch::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+/// Check transitive include/import reachability.
+#[mcp_tool(
+    name = "depends_on",
+    description = "Check whether `from` file transitively includes/imports `to` file. Returns `reachable` plus `chain` for cycle review before adding includes."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct DependsOn {
+    /// Source file
+    pub from: String,
+    /// Target file
+    pub to: String,
+}
+
+impl DependsOn {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "from": self.from,
+            "to": self.to
+        });
+        depends::execute(&args).map_err(CallToolError::new)
+    }
+}
+
+/// Single-hop argument dataflow.
+#[mcp_tool(
+    name = "arg_flow",
+    description = "What flows into this call's argument? Single-hop intra-procedural: returns call row plus latest same-function assignment for bare-identifier args. Output `call`, `arg`, `h`, `flows`."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct ArgFlow {
+    /// File with call site
+    pub file_path: String,
+    /// 1-based line of call
+    pub line: u32,
+    /// 0-based arg index (default 0)
+    #[serde(default)]
+    pub arg: Option<u32>,
+    /// Optional call name filter
+    #[serde(default)]
+    pub symbol: Option<String>,
+}
+
+impl ArgFlow {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "file_path": self.file_path,
+            "line": self.line,
+            "arg": self.arg,
+            "symbol": self.symbol
+        });
+        arg_flow::execute(&args).map_err(CallToolError::new)
+    }
+}
+
 // Generate an enum with all tools
 tool_box!(
     TreesitterTools,
@@ -672,6 +884,11 @@ tool_box!(
         VerifyEdit,
         ReviewContext,
         TemplateContext,
-        TypeMap
+        TypeMap,
+        SearchText,
+        FindWrites,
+        BatchView,
+        DependsOn,
+        ArgFlow
     ]
 );
