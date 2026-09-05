@@ -222,6 +222,14 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         .get("isolate")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let diff_aware = arguments
+        .get("diff_aware")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let compare_to = arguments
+        .get("compare_to")
+        .and_then(Value::as_str)
+        .unwrap_or("HEAD");
     let comment_mode = parse_comment_mode(arguments);
 
     // Back-compat: tests pass include_deps without tool schema.
@@ -285,6 +293,21 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
             apply_isolate(&mut main_shape, symbol);
         } else {
             apply_focus(&mut main_shape, symbol);
+        }
+    } else if diff_aware {
+        // Auto-focus on structurally changed symbols in this file.
+        // Clean tree or unparseable diff → keep the full view.
+        if let Ok(analysis) =
+            crate::analysis::diff::analyze_diff(file_path, compare_to.to_string())
+        {
+            let names: std::collections::HashSet<String> = analysis
+                .structural_changes
+                .iter()
+                .map(|c| c.name.clone())
+                .collect();
+            if !names.is_empty() {
+                apply_isolate_set(&mut main_shape, &names);
+            }
         }
     }
     apply_comment_mode(&mut main_shape, &source, language, comment_mode);
@@ -1416,41 +1439,48 @@ fn push_unique_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
 /// Unlike `apply_focus` (code-only for target, signatures for rest),
 /// this returns just the target so agents don't pay for the whole file.
 fn apply_isolate(shape: &mut EnhancedFileShape, focus_symbol: &str) {
-    shape.functions.retain(|f| f.name == focus_symbol);
-    shape.structs.retain(|s| s.name == focus_symbol);
-    shape.properties.retain(|p| p.name == focus_symbol);
-    shape.interfaces.retain(|i| {
-        i.name == focus_symbol || i.methods.iter().any(|m| m.name == focus_symbol)
-    });
+    let mut set = std::collections::HashSet::new();
+    set.insert(focus_symbol.to_string());
+    apply_isolate_set(shape, &set);
+}
+
+fn apply_isolate_set(shape: &mut EnhancedFileShape, names: &std::collections::HashSet<String>) {
+    let has = |n: &str| names.contains(n);
+    shape.functions.retain(|f| has(&f.name));
+    shape.structs.retain(|s| has(&s.name));
+    shape.properties.retain(|p| has(&p.name));
+    shape
+        .interfaces
+        .retain(|i| has(&i.name) || i.methods.iter().any(|m| has(&m.name)));
     for i in &mut shape.interfaces {
-        if i.name != focus_symbol {
-            i.methods.retain(|m| m.name == focus_symbol);
+        if !has(&i.name) {
+            i.methods.retain(|m| has(&m.name));
         }
     }
-    shape.classes.retain(|c| {
-        c.name == focus_symbol || c.methods.iter().any(|m| m.name == focus_symbol)
-    });
+    shape
+        .classes
+        .retain(|c| has(&c.name) || c.methods.iter().any(|m| has(&m.name)));
     for c in &mut shape.classes {
-        if c.name != focus_symbol {
-            c.methods.retain(|m| m.name == focus_symbol);
+        if !has(&c.name) {
+            c.methods.retain(|m| has(&m.name));
         }
     }
-    shape.traits.retain(|t| {
-        t.name == focus_symbol || t.methods.iter().any(|m| m.name == focus_symbol)
-    });
+    shape
+        .traits
+        .retain(|t| has(&t.name) || t.methods.iter().any(|m| has(&m.name)));
     for t in &mut shape.traits {
-        if t.name != focus_symbol {
-            t.methods.retain(|m| m.name == focus_symbol);
+        if !has(&t.name) {
+            t.methods.retain(|m| has(&m.name));
         }
     }
     shape.impl_blocks.retain(|b| {
-        b.type_name == focus_symbol
-            || b.trait_name.as_deref() == Some(focus_symbol)
-            || b.methods.iter().any(|m| m.name == focus_symbol)
+        has(&b.type_name)
+            || b.trait_name.as_deref().is_some_and(has)
+            || b.methods.iter().any(|m| has(&m.name))
     });
     for b in &mut shape.impl_blocks {
-        if b.type_name != focus_symbol {
-            b.methods.retain(|m| m.name == focus_symbol);
+        if !has(&b.type_name) {
+            b.methods.retain(|m| has(&m.name));
         }
     }
     // Imports/deps are handled downstream via focus-aware referenced-type

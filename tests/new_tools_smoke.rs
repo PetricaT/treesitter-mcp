@@ -279,6 +279,25 @@ fn call_path_and_cycles() {
 }
 
 #[test]
+fn compact_paths_and_diff_aware() {
+    let dir = TempDir::new().unwrap();
+    write_tmp(&dir, "a.py", "def foo():\n    pass\nx = foo()\n");
+    let args = json!({"symbol": "foo", "path": dir.path().to_str().unwrap(), "compact_paths": true, "context_lines": 0});
+    let r = treesitter_mcp::analysis::find_usages::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    assert!(v["h"].as_str().unwrap().starts_with("fid|"));
+    assert!(!v["files"].as_str().unwrap().is_empty());
+
+    // diff_aware code_map on a git repo with no changes falls back to all files
+    std::process::Command::new("git").arg("init").current_dir(dir.path()).output().ok();
+    std::process::Command::new("git").args(["add", "."]).current_dir(dir.path()).output().ok();
+    let args = json!({"path": dir.path().to_str().unwrap(), "diff_aware": true});
+    let r = treesitter_mcp::analysis::code_map::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    assert!(v["@"]["total"].as_u64().unwrap() >= 1);
+}
+
+#[test]
 fn conf_columns_opt_in() {
     let dir = TempDir::new().unwrap();
     let f = write_tmp(&dir, "a.py", "def target():\n    pass\ndef caller():\n    target()\n");

@@ -49,6 +49,13 @@ pub struct ViewCode {
     #[serde(default)]
     pub isolate: Option<bool>,
 
+    /// Optional: auto-focus structurally changed symbols (git working tree).
+    #[serde(default)]
+    pub diff_aware: Option<bool>,
+    /// Git revision for diff_aware (default HEAD).
+    #[serde(default)]
+    pub compare_to: Option<String>,
+
     /// Optional LSP or compact definition location for exact dependency type selection.
     #[serde(default)]
     pub definition_location: Option<ReferenceLocation>,
@@ -94,6 +101,12 @@ pub struct CodeMap {
     /// Cost preview only.
     #[serde(default)]
     pub estimate: Option<bool>,
+    /// Auto-focus git-touched files.
+    #[serde(default)]
+    pub diff_aware: Option<bool>,
+    /// Git revision for diff_aware (default HEAD).
+    #[serde(default)]
+    pub compare_to: Option<String>,
 }
 
 /// Find all usages of a symbol with context and usage type classification
@@ -127,6 +140,9 @@ pub struct FindUsages {
     /// Cost preview only: return estimated_tokens/rows/scope without payload.
     #[serde(default)]
     pub estimate: Option<bool>,
+    /// Path-dictionary compression: `files` id map, `fid` column in rows
+    #[serde(default)]
+    pub compact_paths: Option<bool>,
 }
 
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
@@ -464,6 +480,8 @@ impl ViewCode {
             "detail": self.detail,
             "focus_symbol": self.focus_symbol,
             "isolate": self.isolate,
+            "diff_aware": self.diff_aware,
+            "compare_to": self.compare_to,
             "definition_location": self.definition_location
         });
 
@@ -482,7 +500,9 @@ impl CodeMap {
             "count_usages": self.count_usages.unwrap_or(false),
             "offset": self.offset,
             "limit": self.limit,
-            "estimate": self.estimate
+            "estimate": self.estimate,
+            "diff_aware": self.diff_aware,
+            "compare_to": self.compare_to
         });
 
         code_map::execute(&args).map_err(CallToolError::new)
@@ -499,7 +519,8 @@ impl FindUsages {
             "max_tokens": self.max_tokens,
             "offset": self.offset,
             "limit": self.limit,
-            "estimate": self.estimate
+            "estimate": self.estimate,
+            "compact_paths": self.compact_paths
         });
 
         find_usages::execute(&args).map_err(CallToolError::new)

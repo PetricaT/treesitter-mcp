@@ -97,6 +97,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
     let limit = arguments["limit"].as_u64().map(|v| v as usize);
     let estimate = arguments["estimate"].as_bool().unwrap_or(false);
+    let diff_aware = arguments["diff_aware"].as_bool().unwrap_or(false);
+    let compare_to = arguments["compare_to"].as_str().unwrap_or("HEAD");
 
     log::info!(
         "Generating compact code map for: {path_str} (max_tokens: {max_tokens}, detail: {detail_str}, with_types: {with_types})"
@@ -126,6 +128,20 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         }
     } else if path.is_dir() {
         collect_files_combined(path, &mut result, &options, pattern)?;
+        if diff_aware {
+            // Auto-focus on git-touched files; fall back to all when
+            // git is unavailable or the tree is clean.
+            let touched = changed_files(path, compare_to);
+            if !touched.is_empty() {
+                result.files.retain(|e| {
+                    touched.iter().any(|t| {
+                        e.path == *t
+                            || e.path.ends_with(t.as_str())
+                            || path_utils::to_relative_path(&e.path) == *t
+                    })
+                });
+            }
+        }
         result
             .files
             .sort_by_key(|entry| Reverse(symbol_count(entry)));
@@ -768,6 +784,46 @@ fn filter_class_by_detail(cls: &EnhancedClassInfo, detail_level: DetailLevel) ->
             })
         }
     }
+}
+
+/// Git-touched files (tracked modifications + untracked), relative paths.
+/// Empty when git is unavailable or the tree is clean (caller falls back).
+fn changed_files(root: &Path, compare_to: &str) -> Vec<String> {
+    use std::process::Command;
+    let mut out = Vec::new();
+    if let Ok(res) = Command::new("git")
+        .args(["diff", "--name-only", compare_to, "--"])
+        .current_dir(root)
+        .output()
+    {
+        if res.status.success() {
+            out.extend(
+                String::from_utf8_lossy(&res.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .map(ToString::to_string),
+            );
+        }
+    }
+    if let Ok(res) = Command::new("git")
+        .args(["ls-files", "--others", "--exclude-standard"])
+        .current_dir(root)
+        .output()
+    {
+        if res.status.success() {
+            out.extend(
+                String::from_utf8_lossy(&res.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .map(ToString::to_string),
+            );
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 fn matches_pattern(path: &Path, pattern: &str) -> bool {

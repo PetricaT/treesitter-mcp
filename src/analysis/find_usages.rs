@@ -23,6 +23,7 @@ use crate::analysis::path_utils;
 use crate::common::budget;
 use crate::common::budget::BudgetTracker;
 use crate::common::compact::CompactOutput;
+use crate::common::format;
 use crate::common::project_files::collect_project_files;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, Language};
@@ -75,6 +76,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
     let limit = arguments["limit"].as_u64().map(|v| v as usize);
     let estimate = arguments["estimate"].as_bool().unwrap_or(false);
+    let compact_paths = arguments["compact_paths"].as_bool().unwrap_or(false);
 
     log::info!("Finding usages of '{symbol}' in: {path_str}");
 
@@ -116,6 +118,15 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
             .then_with(|| a.usage_type.cmp(&b.usage_type))
             .then_with(|| a.scope.cmp(&b.scope))
     });
+    // Collapse byte-identical duplicates (nested scopes can emit the same
+    // span twice). Keeps first; no count column — pure noise reduction.
+    usages.dedup_by(|a, b| {
+        a.file == b.file
+            && a.line == b.line
+            && a.column == b.column
+            && a.usage_type == b.usage_type
+            && a.scope == b.scope
+    });
 
     // Convert all file paths to relative paths
     for usage in &mut usages {
@@ -152,21 +163,46 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         }
     };
 
+    // Optional path-dictionary compression: `files` maps id→path,
+    // rows carry the short id in the file column.
+    let (paged, files_dict, header) = if compact_paths {
+        let mut ids: Vec<String> = paged.iter().map(|u| u.file.clone()).collect();
+        ids.sort();
+        ids.dedup();
+        let id_of = |f: &str| ids.iter().position(|x| x == f).unwrap_or(0).to_string();
+        let mut remapped = paged;
+        for u in &mut remapped {
+            u.file = id_of(&u.file.clone());
+        }
+        let dict = ids
+            .iter()
+            .enumerate()
+            .map(|(i, f)| format::format_row(&[&i.to_string(), f]))
+            .collect::<Vec<_>>()
+            .join("\n");
+        (remapped, Some(dict), "fid|line|col|type|context|scope|conf|owner")
+    } else {
+        (paged, None, USAGE_HEADER)
+    };
+
     let (rows, truncated_by_budget) = build_rows_with_budget(
         &paged,
         symbol,
-        USAGE_HEADER,
+        header,
         max_tokens.unwrap_or(usize::MAX),
         max_tokens.is_some(),
     )?;
 
     let mut result = json!({
         "sym": symbol,
-        "h": USAGE_HEADER,
+        "h": header,
         "u": rows,
         "total": total,
         "offset": offset,
     });
+    if let Some(dict) = files_dict {
+        result["files"] = json!(dict);
+    }
 
     if truncated_by_budget {
         result["@"] = json!({"t": true});
