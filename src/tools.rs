@@ -774,10 +774,10 @@ impl FindWrites {
     }
 }
 
-/// Batch fetch multiple files/symbols in one call.
+/// Batch fetch multiple files/symbols/usages in one call.
 #[mcp_tool(
     name = "batch_view",
-    description = "Fetch multiple {file_path, focus_symbol?, detail?} in one call. Returns `items` map keyed `file::symbol` with nested view_code payloads. Batch defaults isolate=true for focused items."
+    description = "Fetch multiple requests in one call: view {file_path, focus_symbol?, detail?} or usages {kind:\"usages\", symbol, path}. Returns `items` map keyed `file::symbol` / `usages::symbol@path` with nested payloads. Batch view defaults isolate=true."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct BatchView {
@@ -790,14 +790,24 @@ pub struct BatchView {
 
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct BatchItem {
-    /// File path
-    pub file_path: String,
-    /// Optional focus symbol
+    /// File path (view items)
+    #[serde(default)]
+    pub file_path: Option<String>,
+    /// Optional focus symbol (view items)
     #[serde(default)]
     pub focus_symbol: Option<String>,
-    /// Optional detail
+    /// Optional detail (view items)
     #[serde(default)]
     pub detail: Option<String>,
+    /// Item kind: omit for view, "usages" for find_usages
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Symbol name (usages items)
+    #[serde(default)]
+    pub symbol: Option<String>,
+    /// Search path (usages items)
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 impl BatchView {

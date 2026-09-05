@@ -81,6 +81,22 @@ fn batch_view_fetches_two_symbols() {
 }
 
 #[test]
+fn batch_view_mixes_view_and_usages() {
+    let dir = TempDir::new().unwrap();
+    let f = write_tmp(&dir, "c.rs", "pub fn alpha() {}\npub fn beta() { alpha(); }\n");
+    let root = dir.path().to_str().unwrap().to_string();
+    let args = json!({"items": [
+        {"file_path": f, "focus_symbol": "alpha"},
+        {"kind": "usages", "symbol": "alpha", "path": root},
+    ]});
+    let r = treesitter_mcp::analysis::batch::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    let items = v["items"].as_object().unwrap();
+    assert_eq!(items.len(), 2);
+    assert!(items.keys().any(|k| k.starts_with("usages::alpha@")));
+}
+
+#[test]
 fn depends_on_traces_chain() {
     let dir = TempDir::new().unwrap();
     let b = write_tmp(&dir, "b.h", "int x;\n");
