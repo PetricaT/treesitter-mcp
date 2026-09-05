@@ -1580,46 +1580,31 @@ fn extract_cpp_enhanced(
                     }
                     processed_nodes.insert(node_id);
 
-                    // Extract function name from declarator
-                    if let Some(name_node) = node
+                    // Extract function name from declarator (handles
+                    // plain, in-class field, and qualified `A::f` names)
+                    if let Some(name) = node
                         .child_by_field_name("declarator")
-                        .and_then(|d| d.child_by_field_name("name"))
-                        .or_else(|| {
-                            // For complex declarators, walk down to find identifier
-                            let mut cursor = node.walk();
-                            for child in node.children(&mut cursor) {
-                                if child.kind() == "function_declarator" {
-                                    if let Some(name) = child.child_by_field_name("declarator") {
-                                        if name.kind() == "identifier" {
-                                            return Some(name);
-                                        }
-                                    }
-                                }
-                            }
-                            None
-                        })
+                        .and_then(|d| cpp_declarator_name(d, source))
                     {
-                        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
-                            let line = node.start_position().row + 1;
-                            let end_line = node.end_position().row + 1;
-                            let signature = extract_signature(node, source)?;
-                            let doc = extract_doc_comment(node, source, Language::Cpp)?;
-                            let code = if include_code {
-                                extract_code(node, source)?
-                            } else {
-                                None
-                            };
+                        let line = node.start_position().row + 1;
+                        let end_line = node.end_position().row + 1;
+                        let signature = extract_signature(node, source)?;
+                        let doc = extract_doc_comment(node, source, Language::Cpp)?;
+                        let code = if include_code {
+                            extract_code(node, source)?
+                        } else {
+                            None
+                        };
 
-                            functions.push(EnhancedFunctionInfo {
-                                name: name.to_string(),
-                                signature,
-                                line,
-                                end_line,
-                                doc,
-                                code,
-                                annotations: vec![],
-                            });
-                        }
+                        functions.push(EnhancedFunctionInfo {
+                            name,
+                            signature,
+                            line,
+                            end_line,
+                            doc,
+                            code,
+                            annotations: vec![],
+                        });
                     }
                 }
                 "func" if node.kind() == "declaration" => {
@@ -1630,28 +1615,24 @@ fn extract_cpp_enhanced(
                     }
                     processed_nodes.insert(node_id);
 
-                    if let Some(name_node) = node
+                    if let Some(name) = node
                         .child_by_field_name("declarator")
-                        .and_then(|d| d.child_by_field_name("declarator"))
+                        .and_then(|d| cpp_declarator_name(d, source))
                     {
-                        if name_node.kind() == "identifier" {
-                            if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
-                                let line = node.start_position().row + 1;
-                                let end_line = node.end_position().row + 1;
-                                let signature = extract_signature(node, source)?;
-                                let doc = extract_doc_comment(node, source, Language::Cpp)?;
+                        let line = node.start_position().row + 1;
+                        let end_line = node.end_position().row + 1;
+                        let signature = extract_signature(node, source)?;
+                        let doc = extract_doc_comment(node, source, Language::Cpp)?;
 
-                                functions.push(EnhancedFunctionInfo {
-                                    name: name.to_string(),
-                                    signature,
-                                    line,
-                                    end_line,
-                                    doc,
-                                    code: None,
-                                    annotations: vec![],
-                                });
-                            }
-                        }
+                        functions.push(EnhancedFunctionInfo {
+                            name,
+                            signature,
+                            line,
+                            end_line,
+                            doc,
+                            code: None,
+                            annotations: vec![],
+                        });
                     }
                 }
                 "class.name" => {
@@ -1746,6 +1727,32 @@ fn extract_cpp_enhanced(
     })
 }
 
+/// Extract a callable name from a C++ declarator node.
+///
+/// Accepts plain `identifier`s, in-class `field_identifier`s, qualified
+/// `A::f` / `A::~f` names (returns the unqualified `f`), and nested
+/// `function_declarator`s. Returns `None` for non-callable declarators
+/// (destructors, operators, function pointers).
+fn cpp_declarator_name(node: Node, source: &str) -> Option<String> {
+    let text = |n: Node| n.utf8_text(source.as_bytes()).ok().map(ToOwned::to_owned);
+    match node.kind() {
+        "identifier" | "field_identifier" | "type_identifier" => text(node),
+        "qualified_identifier" => {
+            let name = node.child_by_field_name("name")?;
+            // Skip destructors (`~Foo`): call sites resolve to `Foo`,
+            // so indexing them as `Foo` would create false call edges.
+            if name.kind() == "destructor_name" {
+                return None;
+            }
+            text(name)
+        }
+        "function_declarator" => node
+            .child_by_field_name("declarator")
+            .and_then(|inner| cpp_declarator_name(inner, source)),
+        _ => None,
+    }
+}
+
 /// Extract methods from a C++ class body
 fn extract_cpp_class_methods(
     class_node: Node,
@@ -1757,44 +1764,40 @@ fn extract_cpp_class_methods(
     if let Some(body) = class_node.child_by_field_name("body") {
         let mut cursor = body.walk();
         for child in body.children(&mut cursor) {
-            // C++ class methods can be function_definition (out-of-line) or
-            // declaration with function_declarator (inline declarations)
+            // C++ class methods can be function_definition (inline bodies)
+            // or declaration/field_declaration with a function_declarator
+            // (prototypes; in-class ones are field_declaration nodes)
             let is_method = child.kind() == "function_definition"
-                || (child.kind() == "declaration"
+                || ((child.kind() == "declaration" || child.kind() == "field_declaration")
                     && child
                         .child_by_field_name("declarator")
                         .map(|d| d.kind() == "function_declarator")
                         .unwrap_or(false));
 
             if is_method {
-                if let Some(name_node) = child
+                if let Some(name) = child
                     .child_by_field_name("declarator")
-                    .and_then(|d| d.child_by_field_name("declarator"))
-                    .or_else(|| child.child_by_field_name("declarator"))
+                    .and_then(|d| cpp_declarator_name(d, source))
                 {
-                    if name_node.kind() == "identifier" {
-                        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
-                            let line = child.start_position().row + 1;
-                            let end_line = child.end_position().row + 1;
-                            let signature = extract_signature(child, source)?;
-                            let doc = extract_doc_comment(child, source, Language::Cpp)?;
-                            let code = if include_code {
-                                extract_code(child, source)?
-                            } else {
-                                None
-                            };
+                    let line = child.start_position().row + 1;
+                    let end_line = child.end_position().row + 1;
+                    let signature = extract_signature(child, source)?;
+                    let doc = extract_doc_comment(child, source, Language::Cpp)?;
+                    let code = if include_code {
+                        extract_code(child, source)?
+                    } else {
+                        None
+                    };
 
-                            methods.push(EnhancedFunctionInfo {
-                                name: name.to_string(),
-                                signature,
-                                line,
-                                end_line,
-                                doc,
-                                code,
-                                annotations: vec![],
-                            });
-                        }
-                    }
+                    methods.push(EnhancedFunctionInfo {
+                        name,
+                        signature,
+                        line,
+                        end_line,
+                        doc,
+                        code,
+                        annotations: vec![],
+                    });
                 }
             }
         }
