@@ -859,10 +859,10 @@ impl DependsOn {
     }
 }
 
-/// Single-hop argument dataflow.
+/// Transitive argument dataflow (bounded, same-file).
 #[mcp_tool(
     name = "arg_flow",
-    description = "What flows into this call's argument? Single-hop intra-procedural: returns call row plus latest same-function assignment for bare-identifier args. Output `call`, `arg`, `h`, `flows`."
+    description = "What flows into this call's argument? Bounded transitive walk same-file (default depth 3, max 5): call row plus assignment chain with kind assign:N. Output `call`, `arg`, `h`, `flows`."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct ArgFlow {
@@ -876,6 +876,9 @@ pub struct ArgFlow {
     /// Optional call name filter
     #[serde(default)]
     pub symbol: Option<String>,
+    /// Hop depth (default 3, max 5)
+    #[serde(default)]
+    pub depth: Option<u32>,
 }
 
 impl ArgFlow {
@@ -884,7 +887,8 @@ impl ArgFlow {
             "file_path": self.file_path,
             "line": self.line,
             "arg": self.arg,
-            "symbol": self.symbol
+            "symbol": self.symbol,
+            "depth": self.depth
         });
         arg_flow::execute(&args).map_err(CallToolError::new)
     }

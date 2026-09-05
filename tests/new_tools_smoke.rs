@@ -123,6 +123,22 @@ fn arg_flow_single_hop() {
 }
 
 #[test]
+fn arg_flow_multi_hop_chain() {
+    let dir = TempDir::new().unwrap();
+    let f = write_tmp(
+        &dir,
+        "a.py",
+        "def f():\n    db = connect()\n    ctl = db\n    run(ctl)\n",
+    );
+    let args = json!({"file_path": f, "line": 4, "depth": 3});
+    let r = treesitter_mcp::analysis::arg_flow::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    let flows = v["flows"].as_str().unwrap();
+    assert!(flows.contains("assign:1"));
+    assert!(flows.contains("assign:2"));
+}
+
+#[test]
 fn call_graph_rank_adds_hints() {
     let dir = TempDir::new().unwrap();
     let f = write_tmp(

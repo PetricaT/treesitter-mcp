@@ -1,11 +1,13 @@
 //! Light argument dataflow: what flows into this call's argument?
 //!
 //! Full dataflow is LSP-grade and explicitly deferred (FUTURE Tier 4).
-//! This answers the single-hop question intra-procedurally:
-//! given a call site line, find the argument expression and its
-//! most recent same-function assignment, if the argument is a plain
-//! identifier.
+//! This answers the question intra-procedurally with a bounded
+//! transitive walk: given a call site line, find the argument
+//! expression and follow same-file assignments up to `depth`
+//! (default 3, max 5), so `worker ← controller ← db` chains
+//! resolve without manual hops.
 
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::io;
 
@@ -18,9 +20,11 @@ use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, parse_code, Language};
 
 const HEADER: &str = "arg|kind|file|line|text";
+// kind is `call` (depth 0) or `assign:N` (N = hop depth, 1-based).
 
 /// Args: `file_path`, `line` (1-based call site), optional `arg`
-/// (0-based index, default 0), optional `symbol` (call name filter).
+/// (0-based index, default 0), optional `symbol` (call name filter),
+/// optional `depth` (default 3, max 5).
 pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let file_path = arguments["file_path"].as_str().ok_or_else(|| {
         io::Error::new(
@@ -33,6 +37,11 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     })? as usize;
     let arg_index = arguments["arg"].as_u64().unwrap_or(0) as usize;
     let symbol_filter = arguments["symbol"].as_str();
+    let depth = arguments["depth"]
+        .as_u64()
+        .map(|v| v as usize)
+        .unwrap_or(3)
+        .clamp(1, 5);
 
     let source = fs::read_to_string(file_path).map_err(|e| {
         io::Error::new(io::ErrorKind::NotFound, format!("read {file_path}: {e}"))
@@ -66,18 +75,38 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         format!("{call_name}({})", args.join(", ")).as_str(),
     ]));
 
-    // Single-hop: if arg is a bare identifier, find its latest assignment
-    // in the enclosing function before the call line.
-    if is_bare_identifier(&arg_text) {
-        if let Some(flow) = latest_assignment(
+    // Transitive walk: follow bare-identifier assignments same-file,
+    // breadth-first up to `depth`, with a visited set against cycles.
+    let mut visited: HashSet<(String, usize)> = HashSet::new();
+    let mut queue: VecDeque<(String, usize, usize)> = VecDeque::new();
+    for ident in rhs_idents(&arg_text) {
+        queue.push_back((ident, line, 1));
+    }
+    if is_bare_identifier(&arg_text) && rhs_idents(&arg_text).is_empty() {
+        queue.push_back((arg_text.trim().to_string(), line, 1));
+    }
+    while let Some((ident, before, d)) = queue.pop_front() {
+        if d > depth {
+            continue;
+        }
+        if let Some((row_line, rhs, row)) = latest_assignment(
             tree.root_node(),
             &source,
             language,
-            &arg_text,
-            line,
+            &ident,
+            before,
             file_path,
         ) {
-            rows.push(flow);
+            if !visited.insert((ident.clone(), row_line)) {
+                continue;
+            }
+            // Rewrite row with depth column.
+            rows.push(with_depth(&row, d));
+            if d < depth {
+                for next in rhs_idents(&rhs) {
+                    queue.push_back((next, row_line, d + 1));
+                }
+            }
         }
     }
 
@@ -225,6 +254,37 @@ fn is_bare_identifier(s: &str) -> bool {
         && !t.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(true)
 }
 
+/// Identifiers inside an expression (RHS, call arg, member base).
+/// `request.plugins` yields `request`; `a + b` yields `a`, `b`.
+fn rhs_idents(expr: &str) -> Vec<String> {
+    const SKIP: &[&str] = &[
+        "self", "this", "true", "false", "none", "null", "nil", "return", "await", "async",
+    ];
+    let mut out = Vec::new();
+    // For `a.b.c`, the base `a` is what we can trace same-file.
+    let base = expr.trim().split('.').next().unwrap_or("").trim();
+    let base = base.split('(').next().unwrap_or("").trim();
+    for tok in base.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
+        if tok.is_empty() || SKIP.contains(&tok) {
+            continue;
+        }
+        if tok.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(true) {
+            continue;
+        }
+        if !out.iter().any(|t| t == tok) {
+            out.push(tok.to_string());
+        }
+    }
+    out
+}
+
+fn with_depth(row: &str, depth: usize) -> String {
+    // Row shape: arg|kind|file|line|text → insert depth before text.
+    // Escaped pipes make exact split unsafe; depth is appended to kind instead:
+    // `assign` → `assign:2`. Keeps HEADER stable for old clients.
+    row.replacen("|assign|", &format!("|assign:{depth}|"), 1)
+}
+
 fn latest_assignment(
     root: Node,
     source: &str,
@@ -232,10 +292,11 @@ fn latest_assignment(
     ident: &str,
     before_line: usize,
     file_path: &str,
-) -> Option<String> {
+) -> Option<(usize, String, String)> {
     // Walk for assignment-like nodes whose target text mentions ident,
     // keeping the latest one before the call line.
-    let mut best: Option<(usize, String)> = None;
+    // Returns (line, rhs, row).
+    let mut best: Option<(usize, String, String)> = None;
     let mut stack = vec![root];
     while let Some(n) = stack.pop() {
         let k = n.kind();
@@ -245,11 +306,22 @@ fn latest_assignment(
                 if let Ok(text) = n.utf8_text(source.as_bytes()) {
                     let first_line = text.lines().next().unwrap_or("").trim().to_string();
                     // Heuristic: LHS contains our identifier as a token.
-                    let lhs = first_line.split('=').next().unwrap_or("");
+                    let mut parts = first_line.splitn(2, '=');
+                    let lhs = parts.next().unwrap_or("");
+                    let rhs = parts.next().unwrap_or("").to_string();
                     if lhs.split(|c: char| !c.is_ascii_alphanumeric() && c != '_').any(|t| t == ident) {
                         match &best {
-                            Some((r, _)) if *r >= row => {}
-                            _ => best = Some((row, first_line)),
+                            Some((r, _, _)) if *r >= row => {}
+                            _ => {
+                                let row_text = format::format_row(&[
+                                    ident,
+                                    "assign",
+                                    path_utils::to_relative_path(file_path).as_str(),
+                                    &row.to_string(),
+                                    first_line.as_str(),
+                                ]);
+                                best = Some((row, rhs, row_text));
+                            }
                         }
                     }
                 }
@@ -260,13 +332,5 @@ fn latest_assignment(
             stack.push(child);
         }
     }
-    best.map(|(row, text)| {
-        format::format_row(&[
-            ident,
-            "assign",
-            path_utils::to_relative_path(file_path).as_str(),
-            &row.to_string(),
-            text.as_str(),
-        ])
-    })
+    best
 }
