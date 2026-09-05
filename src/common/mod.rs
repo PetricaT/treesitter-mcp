@@ -1,4 +1,5 @@
 pub mod budget;
+pub mod cache;
 pub mod compact;
 pub mod format;
 pub mod project_files;

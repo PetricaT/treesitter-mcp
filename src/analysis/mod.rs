@@ -8,6 +8,7 @@ pub mod depends;
 pub mod diff;
 pub mod file_shape;
 pub mod find_usages;
+pub mod index;
 pub mod find_writes;
 pub mod format_diagnostics;
 pub mod format_references;

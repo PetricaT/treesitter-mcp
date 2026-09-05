@@ -4,7 +4,6 @@
 //! ("where does `current_game_id_` get assigned?") need writes only.
 //! Returns the same compact schema as `find_usages` plus `total`/`offset`.
 
-use std::fs;
 use std::io;
 use std::path::Path;
 
@@ -18,7 +17,7 @@ use crate::analysis::find_usages::{
 use crate::analysis::path_utils;
 use crate::common::project_files::collect_project_files;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
-use crate::parser::{detect_language, parse_code, Language};
+use crate::parser::{detect_language, Language};
 
 pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let symbol = arguments["symbol"]
@@ -106,20 +105,14 @@ fn search_file_writes(
     context_lines: u32,
     out: &mut Vec<UsageRow>,
 ) -> Result<(), io::Error> {
-    let source = fs::read_to_string(path).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Failed to read {}: {e}", path.display()),
-        )
-    })?;
     let language = detect_language(path).map_err(|e| {
         io::Error::new(
             io::ErrorKind::Unsupported,
             format!("Cannot detect language: {e}"),
         )
     })?;
-    let tree = parse_code(&source, language).map_err(|e| {
-        io::Error::new(io::ErrorKind::InvalidData, format!("parse: {e}"))
+    let (tree, source) = crate::common::cache::cached_tree(path, language).map_err(|e| {
+        io::Error::new(io::ErrorKind::InvalidData, format!("read/parse: {e}"))
     })?;
     visit(&tree, &source, symbol, language, path, context_lines, out);
     Ok(())

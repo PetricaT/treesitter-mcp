@@ -16,7 +16,7 @@ use crate::analysis::shape::{
 use crate::common::format;
 use crate::common::project_files::collect_project_files;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
-use crate::parser::{detect_language, parse_code, Language};
+use crate::parser::{detect_language, Language};
 
 const EDGE_HEADER: &str = "direction|symbol|file|line|scope|depth";
 const RANKED_HEADER: &str = "direction|symbol|file|line|scope|depth|freq|hints";
@@ -92,7 +92,39 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         .or_else(|| target_path.parent().map(Path::to_path_buf))
         .unwrap_or_else(|| PathBuf::from("."));
     let files = collect_supported_files(&root)?;
-    let definitions = collect_definitions(&files)?;
+    // Persistent index first (mtime-refreshed), fallback to direct parse.
+    // Map index rel paths back to the same PathBufs `files` uses so
+    // `definition.file == file` comparisons keep working.
+    let definitions = match crate::analysis::index::definitions_for_root(&root) {
+        Ok(indexed) if !indexed.is_empty() => {
+            let by_rel: std::collections::HashMap<String, PathBuf> = files
+                .iter()
+                .map(|f| {
+                    (
+                        path_utils::to_relative_path(f.to_string_lossy().as_ref()),
+                        f.clone(),
+                    )
+                })
+                .collect();
+            indexed
+                .into_iter()
+                .map(|d| {
+                    let file = by_rel
+                        .get(&d.file)
+                        .cloned()
+                        .unwrap_or_else(|| root.join(&d.file));
+                    SymbolDef {
+                        name: d.name,
+                        file,
+                        line: d.line,
+                        end_line: d.end_line,
+                        scope: d.scope,
+                    }
+                })
+                .collect()
+        }
+        _ => collect_definitions(&files)?,
+    };
     let target = find_target_definition(&definitions, &target_path, symbol).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -189,22 +221,16 @@ fn collect_definitions(files: &[PathBuf]) -> Result<Vec<SymbolDef>, io::Error> {
 }
 
 fn parse_shape(path: &Path) -> Result<(EnhancedFileShape, Tree, String, Language), io::Error> {
-    let source = fs::read_to_string(path).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Failed to read file {}: {e}", path.display()),
-        )
-    })?;
     let language = detect_language(path).map_err(|e| {
         io::Error::new(
             io::ErrorKind::Unsupported,
             format!("Cannot detect language for file {}: {e}", path.display()),
         )
     })?;
-    let tree = parse_code(&source, language).map_err(|e| {
+    let (tree, source) = crate::common::cache::cached_tree(path, language).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("Failed to parse {} code: {e}", language.name()),
+            format!("Failed to read/parse {}: {e}", path.display()),
         )
     })?;
     let shape = extract_enhanced_shape(&tree, &source, language, path.to_str(), false)?;

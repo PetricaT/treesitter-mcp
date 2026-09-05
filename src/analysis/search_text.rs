@@ -149,7 +149,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
 
     let mut hits: Vec<Hit> = Vec::new();
     for file in files {
-        let Ok(content) = fs::read_to_string(&file) else {
+        let Ok(content) = crate::common::cache::cached_source(&file)
+            .or_else(|_| fs::read_to_string(&file)) else {
             continue;
         };
         let lines: Vec<&str> = content.lines().collect();

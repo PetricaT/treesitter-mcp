@@ -11,7 +11,6 @@
 //! }
 //! ```
 
-use std::fs;
 use std::io;
 use std::path::Path;
 
@@ -26,7 +25,7 @@ use crate::common::budget::BudgetTracker;
 use crate::common::compact::CompactOutput;
 use crate::common::project_files::collect_project_files;
 use crate::mcp_types::{CallToolResult, CallToolResultExt};
-use crate::parser::{detect_language, parse_code, Language};
+use crate::parser::{detect_language, Language};
 
 pub(crate) const USAGE_HEADER: &str = "file|line|col|type|context|scope|conf|owner";
 
@@ -336,13 +335,6 @@ fn search_file(
     budget: &mut ContextBudget,
     usages: &mut Vec<UsageRow>,
 ) -> Result<bool, io::Error> {
-    let source = fs::read_to_string(path).map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("Failed to read file {}: {e}", path.display()),
-        )
-    })?;
-
     let language = detect_language(path).map_err(|e| {
         io::Error::new(
             io::ErrorKind::Unsupported,
@@ -350,10 +342,10 @@ fn search_file(
         )
     })?;
 
-    let tree = parse_code(&source, language).map_err(|e| {
+    let (tree, source) = crate::common::cache::cached_tree(path, language).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("Failed to parse {} code: {e}", language.name()),
+            format!("Failed to read/parse {}: {e}", path.display()),
         )
     })?;
 
