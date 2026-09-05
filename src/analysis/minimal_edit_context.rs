@@ -76,6 +76,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         .as_u64()
         .map(|value| value as usize)
         .unwrap_or(2000);
+    let with_conf = arguments["with_conf"].as_bool().unwrap_or(false);
 
     let source = fs::read_to_string(file_path).map_err(|_| {
         crate::common::suggest::missing_file_err(file_path)
@@ -139,15 +140,29 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         json!(target_to_row(&target, target_code.as_str())),
     );
 
-    let dep_rows = signatures_to_rows(&deps);
+    let dep_rows = signatures_to_rows(&deps, with_conf);
     if !dep_rows.is_empty() {
-        out.insert("dh".to_string(), json!(DEP_HEADER));
+        out.insert(
+            "dh".to_string(),
+            json!(if with_conf {
+                "kind|name|line|sig|conf"
+            } else {
+                DEP_HEADER
+            }),
+        );
         out.insert("deps".to_string(), json!(dep_rows));
     }
 
-    let type_rows = signatures_to_rows(&types);
+    let type_rows = signatures_to_rows(&types, with_conf);
     if !type_rows.is_empty() {
-        out.insert("tyh".to_string(), json!(TYPE_HEADER));
+        out.insert(
+            "tyh".to_string(),
+            json!(if with_conf {
+                "kind|name|line|sig|conf"
+            } else {
+                TYPE_HEADER
+            }),
+        );
         out.insert("types".to_string(), json!(type_rows));
     }
 
@@ -539,12 +554,22 @@ fn target_to_row(target: &TargetSymbol, code: &str) -> String {
     format::format_row(&[&target.name, &line, &target.signature, code])
 }
 
-fn signatures_to_rows(signatures: &[SymbolSignature]) -> String {
+fn signatures_to_rows(signatures: &[SymbolSignature], with_conf: bool) -> String {
     signatures
         .iter()
         .map(|sig| {
             let line = sig.line.to_string();
-            format::format_row(&[sig.kind, &sig.name, &line, &sig.signature])
+            if with_conf {
+                // Same-file (fn/method) high; project-local dep_* medium.
+                let conf = if sig.kind.starts_with("dep_") {
+                    "medium"
+                } else {
+                    "high"
+                };
+                format::format_row(&[sig.kind, &sig.name, &line, &sig.signature, conf])
+            } else {
+                format::format_row(&[sig.kind, &sig.name, &line, &sig.signature])
+            }
         })
         .collect::<Vec<_>>()
         .join("\n")

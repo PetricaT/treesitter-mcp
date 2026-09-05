@@ -19,7 +19,7 @@ use crate::mcp_types::{CallToolResult, CallToolResultExt};
 use crate::parser::{detect_language, Language};
 
 const EDGE_HEADER: &str = "direction|symbol|file|line|scope|depth";
-const RANKED_HEADER: &str = "direction|symbol|file|line|scope|depth|freq|hints";
+const RANKED_HEADER: &str = "direction|symbol|file|line|scope|depth|freq|hints|conf";
 const DEFAULT_MAX_TOKENS: usize = 2000;
 const MAX_DEPTH: usize = 3;
 
@@ -642,7 +642,8 @@ fn ranked_rows_with_budget(
     symbol: &str,
     max_tokens: usize,
 ) -> Result<(String, bool), io::Error> {
-    let mut ranked: Vec<(Edge, usize, String)> = edges
+    let target_file = path_utils::to_relative_path(&target.file.to_string_lossy());
+    let mut ranked: Vec<(Edge, usize, String, &'static str)> = edges
         .iter()
         .map(|e| {
             let (freq, hints) = if e.direction == "caller" {
@@ -650,7 +651,14 @@ fn ranked_rows_with_budget(
             } else {
                 (1, String::new())
             };
-            (e.clone(), freq, hints)
+            let conf = if e.file == target_file {
+                "high"
+            } else if freq >= 2 {
+                "medium"
+            } else {
+                "low"
+            };
+            (e.clone(), freq, hints, conf)
         })
         .collect();
     ranked.sort_by(|a, b| {
@@ -671,7 +679,7 @@ fn ranked_rows_with_budget(
     loop {
         let rows = kept
             .iter()
-            .map(|(e, freq, hints)| {
+            .map(|(e, freq, hints, conf)| {
                 format::format_row(&[
                     e.direction,
                     &e.symbol,
@@ -681,6 +689,7 @@ fn ranked_rows_with_budget(
                     &e.depth.to_string(),
                     &freq.to_string(),
                     hints,
+                    conf,
                 ])
             })
             .collect::<Vec<_>>()

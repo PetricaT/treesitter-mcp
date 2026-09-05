@@ -905,6 +905,7 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
         .to_string();
 
     let scope = arguments["scope"].as_str();
+    let with_conf = arguments["with_conf"].as_bool().unwrap_or(false);
 
     log::info!("Finding affected usages for: {file_path_str}");
 
@@ -934,11 +935,11 @@ pub fn execute_affected_by_diff(arguments: &Value) -> Result<CallToolResult, io:
     let search_path = resolve_search_path(scope, file_path);
     let affected_changes =
         collect_affected_changes_for(file_path, &search_path, &diff_analysis.structural_changes)?;
-    let affected_rows = affected_rows(&affected_changes);
+    let affected_rows = affected_rows(&affected_changes, with_conf);
 
     let result = json!({
         "p": diff_analysis.file_path,
-        "h": "symbol|change|file|line|risk",
+        "h": if with_conf { "symbol|change|file|line|risk|conf" } else { "symbol|change|file|line|risk" },
         "affected": affected_rows,
     });
 
@@ -1006,7 +1007,7 @@ pub fn execute_preview_impact(arguments: &Value) -> Result<CallToolResult, io::E
         "dh": "kind|name|from|to",
         "d": change_detail_rows(&details),
         "h": "symbol|change|file|line|risk",
-        "affected": affected_rows(&affected_changes),
+        "affected": affected_rows(&affected_changes, false),
     });
 
     let result_json = serde_json::to_string(&result).map_err(|e| {
@@ -1431,7 +1432,15 @@ fn collect_affected_changes_for(
     Ok(affected_changes)
 }
 
-fn affected_rows(affected_changes: &[AffectedChange]) -> String {
+fn conf_key(conf: &MatchConfidence) -> &'static str {
+    match conf {
+        MatchConfidence::High => "high",
+        MatchConfidence::Medium => "medium",
+        MatchConfidence::Low => "low",
+    }
+}
+
+fn affected_rows(affected_changes: &[AffectedChange], with_conf: bool) -> String {
     affected_changes
         .iter()
         .flat_map(|chg| {
@@ -1439,7 +1448,12 @@ fn affected_rows(affected_changes: &[AffectedChange]) -> String {
             chg.potentially_affected.iter().map(move |u| {
                 let line = u.line.to_string();
                 let risk = risk_key(&u.risk);
-                format::format_row(&[&chg.symbol, change_key, &u.file, &line, risk])
+                if with_conf {
+                    let conf = conf_key(&u.confidence);
+                    format::format_row(&[&chg.symbol, change_key, &u.file, &line, risk, conf])
+                } else {
+                    format::format_row(&[&chg.symbol, change_key, &u.file, &line, risk])
+                }
             })
         })
         .collect::<Vec<_>>()

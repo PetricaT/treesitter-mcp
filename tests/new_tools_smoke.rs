@@ -279,6 +279,25 @@ fn call_path_and_cycles() {
 }
 
 #[test]
+fn conf_columns_opt_in() {
+    let dir = TempDir::new().unwrap();
+    let f = write_tmp(&dir, "a.py", "def target():\n    pass\ndef caller():\n    target()\n");
+    std::process::Command::new("git").arg("init").current_dir(dir.path()).output().ok();
+    let args = json!({"file_path": f, "symbol_name": "target", "direction": "callers", "rank": true});
+    let r = treesitter_mcp::analysis::call_graph::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    assert!(v["h"].as_str().unwrap().ends_with("conf"));
+    assert!(v["edges"].as_str().unwrap().contains("high"));
+
+    let dir2 = TempDir::new().unwrap();
+    let g = write_tmp(&dir2, "m.py", "def foo():\n    bar()\ndef bar():\n    pass\n");
+    let args = json!({"file_path": g, "symbol_name": "foo", "max_tokens": 2000u64, "with_conf": true});
+    let r = treesitter_mcp::analysis::minimal_edit_context::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    assert_eq!(v["dh"].as_str().unwrap(), "kind|name|line|sig|conf");
+}
+
+#[test]
 fn find_usages_paging_total_offset() {
     let dir = TempDir::new().unwrap();
     let f = write_tmp(&dir, "a.py", "x = 1\nprint(x)\nprint(x)\n");

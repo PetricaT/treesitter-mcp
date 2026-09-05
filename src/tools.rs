@@ -268,12 +268,15 @@ pub struct MinimalEditContext {
     /// - "leading": prepend the contiguous leading comment block above the target symbol
     #[serde(default)]
     pub comment_mode: Option<String>,
+    /// Append conf column to deps/types rows (same-file high, project-local medium)
+    #[serde(default)]
+    pub with_conf: Option<bool>,
 }
 
 /// Return compact callers/callees for one symbol
 #[mcp_tool(
     name = "call_graph",
-    description = "Return a compact best-effort call graph for one function or method. Output keys: `sym`, `h`, `edges`; rows are `direction|symbol|file|line|scope|depth` where direction is `caller` or `callee`. USE WHEN: ✅ You need to know what calls a symbol and what it calls ✅ You want depth=1 impact/navigation context without manual multi-file reads. DON'T USE: ❌ You need compiler-grade name resolution across imports/generics/traits → use LSP references/definitions when available. TOKEN COST: LOW-MEDIUM. Current resolution is syntax-aware and project-local, with same-file definitions preferred."
+    description = "Return a compact best-effort call graph for one function or method. Output keys: `sym`, `h`, `edges`, `cycles`, `total`, `offset`; rows are `direction|symbol|file|line|scope|depth` where direction is `caller` or `callee`. With rank=true rows add `freq|hints|conf` (same-file high, freq>=2 medium, else low). USE WHEN: ✅ You need to know what calls a symbol and what it calls ✅ You want depth=1 impact/navigation context without manual multi-file reads. DON'T USE: ❌ You need compiler-grade name resolution across imports/generics/traits → use LSP references/definitions when available. TOKEN COST: LOW-MEDIUM. Current resolution is syntax-aware and project-local, with same-file definitions preferred."
 )]
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
 pub struct CallGraph {
@@ -352,6 +355,9 @@ pub struct AffectedByDiff {
     /// Directory to search for affected usages (default: project root)
     #[serde(default)]
     pub scope: Option<String>,
+    /// Append conf column (high/medium/low) to affected rows
+    #[serde(default)]
+    pub with_conf: Option<bool>,
 }
 
 /// Preview downstream impact from a planned signature change
@@ -533,7 +539,8 @@ impl MinimalEditContext {
         let args = serde_json::json!({
             "file_path": self.file_path,
             "symbol_name": self.symbol_name,
-            "max_tokens": self.max_tokens
+            "max_tokens": self.max_tokens,
+            "with_conf": self.with_conf
         });
 
         minimal_edit_context::execute(&args).map_err(CallToolError::new)
@@ -586,7 +593,8 @@ impl AffectedByDiff {
         let args = serde_json::json!({
             "file_path": self.file_path,
             "compare_to": self.compare_to,
-            "scope": self.scope
+            "scope": self.scope,
+            "with_conf": self.with_conf
         });
 
         diff::execute_affected_by_diff(&args).map_err(CallToolError::new)
