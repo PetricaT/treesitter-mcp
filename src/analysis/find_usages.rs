@@ -171,6 +171,11 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     if truncated_by_budget {
         result["@"] = json!({"t": true});
     }
+    result["hint"] = json!(crate::common::hints::search_hint(
+        total,
+        truncated_by_budget,
+        symbol
+    ));
 
     let json_text = serde_json::to_string(&result).map_err(|e| {
         io::Error::new(

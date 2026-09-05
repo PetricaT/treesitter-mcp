@@ -224,6 +224,11 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         None => (rows, false),
     };
 
+    let hint = crate::common::hints::search_hint(
+        total,
+        truncated,
+        &patterns.first().cloned().unwrap_or_default(),
+    );
     let mut result = if multi {
         json!({
             "pat": patterns,
@@ -244,6 +249,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     if truncated {
         result["@"] = json!({"t": true});
     }
+    result["hint"] = json!(hint);
 
     let json_text = serde_json::to_string(&result).map_err(|e| {
         io::Error::new(

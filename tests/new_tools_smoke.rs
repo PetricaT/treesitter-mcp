@@ -164,8 +164,8 @@ fn code_map_paging_meta() {
     let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
     assert_eq!(v["@"]["total"], 2);
     assert_eq!(v["@"]["offset"], 0);
-    // only one file key besides @ (and maybe types)
-    let file_keys: Vec<_> = v.as_object().unwrap().keys().filter(|k| *k != "@" && *k != "types").collect();
+    // only one file key besides @/types/hint
+    let file_keys: Vec<_> = v.as_object().unwrap().keys().filter(|k| *k != "@" && *k != "types" && *k != "hint").collect();
     assert_eq!(file_keys.len(), 1);
 }
 

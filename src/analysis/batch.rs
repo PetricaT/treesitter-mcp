@@ -156,6 +156,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     if truncated {
         result["@"] = json!({"t": true});
     }
+    result["hint"] = json!("batch done; minimal_edit_context on edit target, affected_by_diff after edits");
     let text = serde_json::to_string(&result).map_err(|e| {
         io::Error::new(io::ErrorKind::InvalidData, format!("serialize: {e}"))
     })?;

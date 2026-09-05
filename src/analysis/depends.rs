@@ -115,6 +115,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         "to": path_utils::to_relative_path(to),
         "reachable": reachable,
         "chain": chain.join("\n"),
+        "hint": if reachable { "reachable; adding the edge closes a cycle — pick the other direction or break it" } else { "not reachable; safe to add the include" },
     });
     let text = serde_json::to_string(&result).map_err(|e| {
         io::Error::new(io::ErrorKind::InvalidData, format!("serialize: {e}"))

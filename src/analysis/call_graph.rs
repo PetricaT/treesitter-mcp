@@ -170,6 +170,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         edge_rows_with_budget(&edges, symbol, max_tokens)?
     };
     let cycles = detect_cycles(&target, &definitions);
+    let callers = edges.iter().filter(|e| e.direction == "caller").count();
+    let callees = edges.iter().filter(|e| e.direction == "callee").count();
     let mut result = json!({
         "sym": symbol,
         "h": header,
@@ -177,6 +179,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         "total": total,
         "offset": offset,
         "cycles": cycles.join("\n"),
+        "hint": crate::common::hints::graph_hint(callers, callees, cycles.len()),
     });
     if truncated {
         result["@"] = json!({"t": true});

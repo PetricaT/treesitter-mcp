@@ -93,6 +93,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     if truncated {
         result["@"] = json!({"t": true});
     }
+    result["hint"] = json!(crate::common::hints::search_hint(total, truncated, symbol));
     let json_text = serde_json::to_string(&result).map_err(|e| {
         io::Error::new(io::ErrorKind::InvalidData, format!("serialize: {e}"))
     })?;

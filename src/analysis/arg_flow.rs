@@ -115,6 +115,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         "arg": arg_text,
         "h": HEADER,
         "flows": rows.join("\n"),
+        "hint": "single file only; find_writes traces the identifier project-wide",
     });
     let _ = &mut result;
     let text = serde_json::to_string(&result).map_err(|e| {

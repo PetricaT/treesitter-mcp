@@ -378,6 +378,13 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     if truncated {
         out.insert("@".to_string(), json!({"t": true}));
     }
+    out.insert(
+        "hint".to_string(),
+        json!(crate::common::hints::view_hint(
+            focus_symbol.is_some(),
+            truncated
+        )),
+    );
 
     let output_json = serde_json::to_string(&Value::Object(out)).map_err(|e| {
         io::Error::new(

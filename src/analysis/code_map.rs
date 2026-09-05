@@ -173,6 +173,11 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         build_compact_output_combined(&result, detail_level, max_tokens, with_types)?;
 
     // Paging meta under `@` (backward compatible: `@.t` still signals truncation).
+    let truncated_flag = result_map
+        .get("@")
+        .and_then(|v| v.get("t"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let meta = result_map
         .entry("@".to_string())
         .or_insert_with(|| json!({}));
@@ -180,6 +185,10 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         obj.insert("total".to_string(), json!(total));
         obj.insert("offset".to_string(), json!(offset));
     }
+    result_map.insert(
+        "hint".to_string(),
+        json!(crate::common::hints::map_hint(total, truncated_flag)),
+    );
 
     let json_text = serde_json::to_string(&Value::Object(result_map)).map_err(|e| {
         io::Error::new(

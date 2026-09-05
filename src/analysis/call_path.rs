@@ -138,6 +138,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         "to": to,
         "reachable": reachable,
         "chain": chain,
+        "hint": if reachable { "path found; call_graph rank=true prioritizes the callers" } else { "no path to depth; try find_usages (non-call refs) or raise depth" },
     });
     let text = serde_json::to_string(&result).map_err(|e| {
         io::Error::new(io::ErrorKind::InvalidData, format!("serialize: {e}"))
