@@ -38,6 +38,7 @@ use crate::parser::{detect_language, parse_code};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum DetailLevel {
+    Minimal,
     Signatures,
     Full,
 }
@@ -55,6 +56,7 @@ impl DetailLevel {
         if let Some(detail) = arguments.get("detail").and_then(Value::as_str) {
             return match detail {
                 "full" => DetailLevel::Full,
+                "minimal" => DetailLevel::Minimal,
                 _ => DetailLevel::Signatures,
             };
         }
@@ -72,6 +74,7 @@ impl DetailLevel {
 
     fn header(self) -> &'static str {
         match self {
+            DetailLevel::Minimal => "name|line",
             DetailLevel::Signatures => "name|line|sig",
             DetailLevel::Full => "name|line|sig|doc|code",
         }
@@ -81,8 +84,13 @@ impl DetailLevel {
         matches!(self, DetailLevel::Full)
     }
 
+    fn is_minimal(self) -> bool {
+        matches!(self, DetailLevel::Minimal)
+    }
+
     fn trait_header(self) -> &'static str {
         match self {
+            DetailLevel::Minimal => "trait|name|line",
             DetailLevel::Signatures => "trait|name|line|sig",
             DetailLevel::Full => "trait|name|line|sig|doc|code",
         }
@@ -90,6 +98,7 @@ impl DetailLevel {
 
     fn class_method_header(self) -> &'static str {
         match self {
+            DetailLevel::Minimal => "class|name|line",
             DetailLevel::Signatures => "class|name|line|sig|ann",
             DetailLevel::Full => "class|name|line|sig|ann|doc|code",
         }
@@ -97,6 +106,7 @@ impl DetailLevel {
 
     fn impl_method_header(self) -> &'static str {
         match self {
+            DetailLevel::Minimal => "impl|trait|name|line",
             DetailLevel::Signatures => "impl|trait|name|line|sig",
             DetailLevel::Full => "impl|trait|name|line|sig|doc|code",
         }
@@ -617,6 +627,10 @@ fn functions_to_rows(functions: &[EnhancedFunctionInfo], detail: DetailLevel) ->
             let mut fields: Vec<String> = Vec::new();
             fields.push(func.name.clone());
             fields.push(line);
+            if detail.is_minimal() {
+                let refs: Vec<&str> = fields.iter().map(|s| s.as_str()).collect();
+                return format::format_row(&refs);
+            }
             fields.push(func.signature.clone());
 
             if detail == DetailLevel::Full {
@@ -639,6 +653,10 @@ fn structs_to_rows(structs: &[EnhancedStructInfo], detail: DetailLevel) -> Strin
             fields.push(s.name.clone());
             fields.push(s.line.to_string());
 
+            if detail.is_minimal() {
+                let refs: Vec<&str> = fields.iter().map(|v| v.as_str()).collect();
+                return format::format_row(&refs);
+            }
             let sig = signature_snippet_from_code(s.code.as_deref());
             fields.push(sig);
 
@@ -662,6 +680,10 @@ fn classes_to_rows(classes: &[EnhancedClassInfo], detail: DetailLevel) -> String
             fields.push(c.name.clone());
             fields.push(c.line.to_string());
 
+            if detail.is_minimal() {
+                let refs: Vec<&str> = fields.iter().map(|v| v.as_str()).collect();
+                return format::format_row(&refs);
+            }
             let sig = signature_snippet_from_code(c.code.as_deref());
             fields.push(sig);
 
@@ -697,6 +719,10 @@ fn interfaces_to_rows(interfaces: &[InterfaceInfo], detail: DetailLevel) -> Stri
             fields.push(interface.name.clone());
             fields.push(interface.line.to_string());
 
+            if detail.is_minimal() {
+                let refs: Vec<&str> = fields.iter().map(|s| s.as_str()).collect();
+                return format::format_row(&refs);
+            }
             let sig = signature_snippet_from_code(interface.code.as_deref());
             fields.push(sig);
 
@@ -778,6 +804,12 @@ fn class_method_to_row(
         method.annotations.join(",")
     };
 
+    if detail.is_minimal() {
+        let owned = [class_name.to_string(), method.name.clone(), line];
+        let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+        return format::format_row(&refs);
+    }
+
     if detail == DetailLevel::Full {
         let owned = [
             class_name.to_string(),
@@ -819,6 +851,17 @@ fn impl_method_to_row(block: &ImplBlockInfo, method: &MethodInfo, detail: Detail
     let line = method.line.to_string();
     let trait_name = block.trait_name.clone().unwrap_or_default();
 
+    if detail.is_minimal() {
+        let owned = [
+            block.type_name.clone(),
+            trait_name,
+            method.name.clone(),
+            line,
+        ];
+        let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+        return format::format_row(&refs);
+    }
+
     if detail == DetailLevel::Full {
         let owned = [
             block.type_name.clone(),
@@ -846,6 +889,12 @@ fn impl_method_to_row(block: &ImplBlockInfo, method: &MethodInfo, detail: Detail
 
 fn trait_method_to_row(trait_name: &str, method: &MethodInfo, detail: DetailLevel) -> String {
     let line = method.line.to_string();
+
+    if detail.is_minimal() {
+        let owned = [trait_name.to_string(), method.name.clone(), line];
+        let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+        return format::format_row(&refs);
+    }
 
     if detail == DetailLevel::Full {
         let owned = [
@@ -1380,6 +1429,11 @@ fn type_rows_to_string(rows: &[&TypeRow], detail: DetailLevel) -> String {
     rows.iter()
         .map(|row| {
             let line = row.line.to_string();
+            if detail.is_minimal() {
+                let owned = [row.name.clone(), line];
+                let refs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+                return format::format_row(&refs);
+            }
             let sig = row
                 .signature
                 .clone()

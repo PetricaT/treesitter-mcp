@@ -279,6 +279,23 @@ fn call_path_and_cycles() {
 }
 
 #[test]
+fn plan_context_and_minimal_level() {
+    let args = json!({"task": "rename calculate in src/math/", "budget": 3000, "symbol": "calculate"});
+    let r = treesitter_mcp::analysis::plan_context::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    assert_eq!(v["fits"], true);
+    assert!(!v["steps"].as_array().unwrap().is_empty());
+
+    let dir = TempDir::new().unwrap();
+    let f = write_tmp(&dir, "a.py", "def foo():\n    pass\ndef bar():\n    pass\n");
+    let args = json!({"file_path": f, "detail": "minimal", "include_deps": false});
+    let r = treesitter_mcp::analysis::view_code::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    assert_eq!(v["h"].as_str().unwrap(), "name|line");
+    assert!(!v["f"].as_str().unwrap().contains("pass"));
+}
+
+#[test]
 fn compact_paths_and_diff_aware() {
     let dir = TempDir::new().unwrap();
     write_tmp(&dir, "a.py", "def foo():\n    pass\nx = foo()\n");

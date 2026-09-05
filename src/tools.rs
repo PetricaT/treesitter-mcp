@@ -10,8 +10,8 @@ use rust_mcp_sdk::tool_box;
 use crate::analysis::{
     apply_edit, arg_flow, batch, bootstrap, call_graph, call_path, code_map, depends, diff,
     find_usages, find_writes, format_diagnostics, format_references, minimal_edit_context,
-    module_map, prompt_snippet, query_pattern, relevant_tests, rename, review_context,
-    search_text, symbol_at_line, verify_edit, view_code,
+    module_map, plan_context, prompt_snippet, query_pattern, relevant_tests, rename,
+    review_context, search_text, symbol_at_line, verify_edit, view_code,
 };
 
 // Helper function for serde default
@@ -33,7 +33,8 @@ pub struct ViewCode {
     /// Path to the source file
     pub file_path: String,
 
-    /// Detail level: "signatures" or "full" (default: "full")
+    /// Detail level: "minimal", "signatures" or "full" (default: "full")
+    /// - "minimal": Names and lines only (progressive disclosure level 0)
     /// - "signatures": Function/class signatures only (no bodies)
     /// - "full": Complete implementation code
     #[serde(default = "default_full")]
@@ -971,6 +972,42 @@ impl ApplySymbolEdit {
     }
 }
 
+/// Budget advisor: which calls fit the budget.
+#[mcp_tool(
+    name = "plan_context",
+    description = "Recommend a tool sequence for a task within a token budget. Input `task`, `budget` (default 3000), optional `path`/`file_path`/`symbol`. Returns ordered `steps` with per-call budgets and `fits` flag."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct PlanContext {
+    /// Task description, e.g. rename calculate in src/math/
+    pub task: String,
+    /// Token budget (default 3000)
+    #[serde(default)]
+    pub budget: Option<u32>,
+    /// Directory scope
+    #[serde(default)]
+    pub path: Option<String>,
+    /// File scope
+    #[serde(default)]
+    pub file_path: Option<String>,
+    /// Symbol scope
+    #[serde(default)]
+    pub symbol: Option<String>,
+}
+
+impl PlanContext {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "task": self.task,
+            "budget": self.budget,
+            "path": self.path,
+            "file_path": self.file_path,
+            "symbol": self.symbol
+        });
+        plan_context::execute(&args).map_err(CallToolError::new)
+    }
+}
+
 /// Agent system-prompt fragment: when to reach for which tool.
 #[mcp_tool(
     name = "prompt_snippet",
@@ -1177,6 +1214,7 @@ tool_box!(
         SessionBootstrap,
         PromptSnippet,
         RenamePreview,
-        ModuleMap
+        ModuleMap,
+        PlanContext
     ]
 );
