@@ -200,6 +200,17 @@ fn apply_symbol_edit_dry_run() {
 }
 
 #[test]
+fn rename_preview_lists_edits() {
+    let dir = TempDir::new().unwrap();
+    write_tmp(&dir, "a.py", "def foo():\n    pass\nx = foo()\n");
+    let args = json!({"symbol": "foo", "new_name": "bar", "path": dir.path().to_str().unwrap()});
+    let r = treesitter_mcp::analysis::rename::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    assert!(v["total_edits"].as_u64().unwrap() >= 2);
+    assert!(v["edits"].as_str().unwrap().contains("bar"));
+}
+
+#[test]
 fn rich_errors_suggest_files_and_symbols() {
     let dir = TempDir::new().unwrap();
     fs::create_dir_all(dir.path().join("src")).unwrap();

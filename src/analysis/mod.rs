@@ -20,6 +20,7 @@ pub mod path_utils;
 pub mod prompt_snippet;
 pub mod query_pattern;
 pub mod relevant_tests;
+pub mod rename;
 pub mod review_context;
 pub mod search_text;
 pub mod shape;

@@ -10,8 +10,8 @@ use rust_mcp_sdk::tool_box;
 use crate::analysis::{
     apply_edit, arg_flow, batch, bootstrap, call_graph, call_path, code_map, depends, diff,
     find_usages, find_writes, format_diagnostics, format_references, minimal_edit_context,
-    prompt_snippet, query_pattern, relevant_tests, review_context, search_text, symbol_at_line,
-    verify_edit, view_code,
+    prompt_snippet, query_pattern, relevant_tests, rename, review_context, search_text,
+    symbol_at_line, verify_edit, view_code,
 };
 
 // Helper function for serde default
@@ -914,6 +914,44 @@ impl PromptSnippet {
     }
 }
 
+/// Rename dry-run: preview edits without touching files.
+#[mcp_tool(
+    name = "rename_preview",
+    description = "Preview a rename across the project without editing. Output `h` (file|line|col|old_text|new_text|confidence), `edits`, `files_modified`, `total_edits`. Confidence reuses find_usages scope signal."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct RenamePreview {
+    /// Symbol to rename
+    pub symbol: String,
+    /// Replacement identifier
+    pub new_name: String,
+    /// File or directory to search
+    pub path: String,
+    /// Paging offset
+    #[serde(default)]
+    pub offset: Option<u32>,
+    /// Paging limit
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Max tokens budget
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+}
+
+impl RenamePreview {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "symbol": self.symbol,
+            "new_name": self.new_name,
+            "path": self.path,
+            "offset": self.offset,
+            "limit": self.limit,
+            "max_tokens": self.max_tokens
+        });
+        rename::execute(&args).map_err(CallToolError::new)
+    }
+}
+
 /// Session bootstrap: types + minimal map + entries + tests in one call.
 #[mcp_tool(
     name = "session_bootstrap",
@@ -1032,6 +1070,7 @@ tool_box!(
         CallPath,
         ApplySymbolEdit,
         SessionBootstrap,
-        PromptSnippet
+        PromptSnippet,
+        RenamePreview
     ]
 );
