@@ -74,6 +74,9 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
 
+    let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
+    let limit = arguments["limit"].as_u64().map(|v| v as usize);
+
     let rel_path = path_utils::to_relative_path(file_path);
     let header = "file|line|col|text";
     let mut out = CompactOutput::new(header);
@@ -97,10 +100,27 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         }
     }
 
+    let all_rows = out.rows_string();
+    let all: Vec<&str> = if all_rows.is_empty() {
+        Vec::new()
+    } else {
+        all_rows.lines().collect()
+    };
+    let total = all.len();
+    let paged = {
+        let it = all.into_iter().skip(offset);
+        match limit {
+            Some(n) => it.take(n).collect::<Vec<_>>().join("\n"),
+            None => it.collect::<Vec<_>>().join("\n"),
+        }
+    };
+
     let result = json!({
         "q": query_str,
         "h": header,
-        "m": out.rows_string(),
+        "m": paged,
+        "total": total,
+        "offset": offset,
     });
 
     let result_json = serde_json::to_string(&result).map_err(|e| {

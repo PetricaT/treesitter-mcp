@@ -185,6 +185,12 @@ pub struct FormatReferences {
     /// Maximum tokens for output (tiktoken counted)
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// Paging offset
+    #[serde(default)]
+    pub offset: Option<u32>,
+    /// Paging limit
+    #[serde(default)]
+    pub limit: Option<u32>,
 }
 
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
@@ -235,6 +241,12 @@ pub struct FormatDiagnostics {
     /// Maximum tokens for output (tiktoken counted)
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// Paging offset
+    #[serde(default)]
+    pub offset: Option<u32>,
+    /// Paging limit
+    #[serde(default)]
+    pub limit: Option<u32>,
 }
 
 /// Return compact context needed to edit one symbol
@@ -374,6 +386,12 @@ pub struct QueryPattern {
     /// Number of context lines around each match (default: 2)
     #[serde(default)]
     pub context_lines: Option<u32>,
+    /// Paging offset
+    #[serde(default)]
+    pub offset: Option<u32>,
+    /// Paging limit
+    #[serde(default)]
+    pub limit: Option<u32>,
 }
 
 /// Identify likely relevant tests for one symbol
@@ -387,6 +405,12 @@ pub struct RelevantTests {
     pub file_path: String,
     /// Symbol name to analyze
     pub symbol_name: String,
+    /// Paging offset
+    #[serde(default)]
+    pub offset: Option<u32>,
+    /// Paging limit
+    #[serde(default)]
+    pub limit: Option<u32>,
 }
 
 /// Verify that an edit stayed within the intended structural scope
@@ -482,7 +506,9 @@ impl FormatReferences {
             "symbol": self.symbol,
             "references": self.references,
             "context_lines": self.context_lines,
-            "max_tokens": self.max_tokens
+            "max_tokens": self.max_tokens,
+            "offset": self.offset,
+            "limit": self.limit
         });
 
         format_references::execute(&args).map_err(CallToolError::new)
@@ -493,7 +519,9 @@ impl FormatDiagnostics {
     pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
         let args = serde_json::json!({
             "diagnostics": self.diagnostics,
-            "max_tokens": self.max_tokens
+            "max_tokens": self.max_tokens,
+            "offset": self.offset,
+            "limit": self.limit
         });
 
         format_diagnostics::execute(&args).map_err(CallToolError::new)
@@ -583,7 +611,9 @@ impl QueryPattern {
         let args = serde_json::json!({
             "file_path": self.file_path,
             "query": self.query,
-            "context_lines": self.context_lines
+            "context_lines": self.context_lines,
+            "offset": self.offset,
+            "limit": self.limit
         });
 
         query_pattern::execute(&args).map_err(CallToolError::new)
@@ -594,7 +624,9 @@ impl RelevantTests {
     pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
         let args = serde_json::json!({
             "file_path": self.file_path,
-            "symbol_name": self.symbol_name
+            "symbol_name": self.symbol_name,
+            "offset": self.offset,
+            "limit": self.limit
         });
 
         relevant_tests::execute(&args).map_err(CallToolError::new)

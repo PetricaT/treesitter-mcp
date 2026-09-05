@@ -46,8 +46,19 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         .or_else(|| target_path.parent().map(Path::to_path_buf))
         .unwrap_or_else(|| PathBuf::from("."));
 
+    let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
+    let limit = arguments["limit"].as_u64().map(|v| v as usize);
+
     let tests = collect_relevant_tests(&project_root, target_path, symbol_name)?;
-    let rows = tests
+    let total = tests.len();
+    let paged: Vec<_> = {
+        let it = tests.into_iter().skip(offset);
+        match limit {
+            Some(n) => it.take(n).collect(),
+            None => it.collect(),
+        }
+    };
+    let rows = paged
         .iter()
         .map(|test| {
             let line = test.line.to_string();
@@ -60,6 +71,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         "sym": symbol_name,
         "h": TEST_HEADER,
         "tests": rows,
+        "total": total,
+        "offset": offset,
     });
     let result_json = serde_json::to_string(&result).map_err(|e| {
         io::Error::new(

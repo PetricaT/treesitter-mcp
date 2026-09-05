@@ -53,6 +53,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         .map(|value| value as u32)
         .unwrap_or(3);
     let max_tokens = arguments["max_tokens"].as_u64().map(|value| value as usize);
+    let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
+    let limit = arguments["limit"].as_u64().map(|v| v as usize);
 
     let mut parsed_locations = Vec::new();
     for reference in references {
@@ -102,8 +104,17 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
             .then_with(|| a.scope.cmp(&b.scope))
     });
 
+    let total = usages.len();
+    let paged: Vec<_> = {
+        let it = usages.into_iter().skip(offset);
+        match limit {
+            Some(n) => it.take(n).collect(),
+            None => it.collect(),
+        }
+    };
+
     let (rows, truncated_by_budget) = build_rows_with_budget(
-        &usages,
+        &paged,
         symbol,
         USAGE_HEADER,
         max_tokens.unwrap_or(usize::MAX),
@@ -114,6 +125,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         "sym": symbol,
         "h": USAGE_HEADER,
         "u": rows,
+        "total": total,
+        "offset": offset,
     });
 
     if truncated_by_budget {

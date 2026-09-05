@@ -56,6 +56,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         .as_u64()
         .map(|value| value as usize)
         .unwrap_or(DEFAULT_MAX_TOKENS);
+    let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
+    let limit = arguments["limit"].as_u64().map(|v| v as usize);
 
     let mut parsed_diagnostics = Vec::new();
     for diagnostic in diagnostics {
@@ -94,10 +96,21 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
             .then_with(|| a.message.cmp(&b.message))
     });
 
-    let (diagnostic_rows, truncated) = rows_with_budget(&rows, max_tokens)?;
+    let total = rows.len();
+    let paged: Vec<DiagnosticRow> = {
+        let it = rows.into_iter().skip(offset);
+        match limit {
+            Some(n) => it.take(n).collect(),
+            None => it.collect(),
+        }
+    };
+
+    let (diagnostic_rows, truncated) = rows_with_budget(&paged, max_tokens)?;
     let mut result = json!({
         "h": DIAGNOSTIC_HEADER,
         "d": diagnostic_rows,
+        "total": total,
+        "offset": offset,
     });
 
     if truncated {
