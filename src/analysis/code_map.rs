@@ -96,6 +96,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let count_usages = arguments["count_usages"].as_bool().unwrap_or(false);
     let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
     let limit = arguments["limit"].as_u64().map(|v| v as usize);
+    let estimate = arguments["estimate"].as_bool().unwrap_or(false);
 
     log::info!(
         "Generating compact code map for: {path_str} (max_tokens: {max_tokens}, detail: {detail_str}, with_types: {with_types})"
@@ -160,6 +161,20 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     }
 
     let total = result.files.len();
+    if estimate {
+        let symbols: usize = result.files.iter().map(symbol_count).sum();
+        let out = json!({
+            "path": path_str,
+            "estimated_tokens": symbols * 30 + total * 10,
+            "estimated_rows": total,
+            "scope_summary": format!("{total} files, {symbols} symbols"),
+            "total": total,
+        });
+        let text = serde_json::to_string(&out).map_err(|e| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("serialize: {e}"))
+        })?;
+        return Ok(CallToolResult::success(text));
+    }
     if offset > 0 || limit.is_some() {
         let files = std::mem::take(&mut result.files);
         let skipped = files.into_iter().skip(offset);

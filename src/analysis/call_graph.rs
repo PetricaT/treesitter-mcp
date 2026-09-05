@@ -79,6 +79,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let rank = arguments["rank"].as_bool().unwrap_or(false);
     let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
     let limit = arguments["limit"].as_u64().map(|v| v as usize);
+    let estimate = arguments["estimate"].as_bool().unwrap_or(false);
 
     let target_path = PathBuf::from(file_path);
     if !target_path.exists() {
@@ -137,6 +138,25 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         collect_caller_edges(&target, &files, &definitions, depth, &mut edges)?;
     }
 
+    if estimate {
+        // Count edges without budget formatting.
+        let callers = edges
+            .iter()
+            .filter(|e| e.direction == "caller")
+            .count();
+        let callees = edges.len() - callers;
+        let out = json!({
+            "sym": symbol,
+            "estimated_tokens": edges.len() * 25,
+            "estimated_rows": edges.len(),
+            "scope_summary": format!("{callers} callers, {callees} callees"),
+            "total": edges.len(),
+        });
+        let text = serde_json::to_string(&out).map_err(|e| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("serialize: {e}"))
+        })?;
+        return Ok(CallToolResult::success(text));
+    }
     edges.sort_by(|a, b| {
         a.depth
             .cmp(&b.depth)

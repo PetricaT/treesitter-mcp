@@ -91,6 +91,9 @@ pub struct CodeMap {
     /// Paging limit over files.
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Cost preview only.
+    #[serde(default)]
+    pub estimate: Option<bool>,
 }
 
 /// Find all usages of a symbol with context and usage type classification
@@ -284,6 +287,9 @@ pub struct CallGraph {
     /// Paging limit over total edges.
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Cost preview only.
+    #[serde(default)]
+    pub estimate: Option<bool>,
 }
 
 /// Get symbol information at a specific line with signature and scope chain
@@ -445,7 +451,8 @@ impl CodeMap {
             "with_types": self.with_types.unwrap_or(false),
             "count_usages": self.count_usages.unwrap_or(false),
             "offset": self.offset,
-            "limit": self.limit
+            "limit": self.limit,
+            "estimate": self.estimate
         });
 
         code_map::execute(&args).map_err(CallToolError::new)
@@ -515,7 +522,8 @@ impl CallGraph {
             "max_tokens": self.max_tokens,
             "rank": self.rank,
             "offset": self.offset,
-            "limit": self.limit
+            "limit": self.limit,
+            "estimate": self.estimate
         });
 
         call_graph::execute(&args).map_err(CallToolError::new)
@@ -681,6 +689,9 @@ pub struct TypeMap {
     /// Paging offset.
     #[serde(default)]
     pub offset: Option<u32>,
+    /// Cost preview only.
+    #[serde(default)]
+    pub estimate: Option<bool>,
 }
 
 impl TypeMap {
@@ -691,7 +702,8 @@ impl TypeMap {
             "pattern": self.pattern,
             "count_usages": self.count_usages.unwrap_or(true),
             "limit": self.limit,
-            "offset": self.offset
+            "offset": self.offset,
+            "estimate": self.estimate
         });
 
         crate::analysis::type_map::execute(&args)

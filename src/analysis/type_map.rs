@@ -23,6 +23,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
     let limit = arguments["limit"].as_u64().map(|v| v as usize);
     let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
     let count_usages = arguments["count_usages"].as_bool().unwrap_or(true);
+    let estimate = arguments["estimate"].as_bool().unwrap_or(false);
 
     let pattern = arguments["pattern"].as_str();
 
@@ -71,6 +72,18 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
 
     // 5) Pagination (total before paging so agents can page)
     let total = filtered.len();
+    if estimate {
+        let out = json!({
+            "path": path_str,
+            "estimated_tokens": total * 40,
+            "estimated_rows": total,
+            "scope_summary": format!("{total} types"),
+            "total": total,
+        });
+        return Ok(CallToolResult::success(
+            serde_json::to_string(&out).unwrap_or_default(),
+        ));
+    }
     if offset > 0 {
         filtered = filtered.into_iter().skip(offset).collect();
     }
