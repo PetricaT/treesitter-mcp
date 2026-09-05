@@ -200,6 +200,18 @@ fn apply_symbol_edit_dry_run() {
 }
 
 #[test]
+fn module_map_lists_exports() {
+    let dir = TempDir::new().unwrap();
+    write_tmp(&dir, "a.py", "def foo():\n    pass\nclass Bar:\n    pass\n");
+    let args = json!({"path": dir.path().to_str().unwrap()});
+    let r = treesitter_mcp::analysis::module_map::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    let rows = v["modules"].as_str().unwrap();
+    assert!(rows.contains("foo"));
+    assert!(rows.contains("Bar"));
+}
+
+#[test]
 fn rename_preview_lists_edits() {
     let dir = TempDir::new().unwrap();
     write_tmp(&dir, "a.py", "def foo():\n    pass\nx = foo()\n");

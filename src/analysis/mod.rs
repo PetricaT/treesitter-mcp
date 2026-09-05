@@ -16,6 +16,7 @@ pub mod find_writes;
 pub mod format_diagnostics;
 pub mod format_references;
 pub mod minimal_edit_context;
+pub mod module_map;
 pub mod path_utils;
 pub mod prompt_snippet;
 pub mod query_pattern;

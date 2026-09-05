@@ -10,8 +10,8 @@ use rust_mcp_sdk::tool_box;
 use crate::analysis::{
     apply_edit, arg_flow, batch, bootstrap, call_graph, call_path, code_map, depends, diff,
     find_usages, find_writes, format_diagnostics, format_references, minimal_edit_context,
-    prompt_snippet, query_pattern, relevant_tests, rename, review_context, search_text,
-    symbol_at_line, verify_edit, view_code,
+    module_map, prompt_snippet, query_pattern, relevant_tests, rename, review_context,
+    search_text, symbol_at_line, verify_edit, view_code,
 };
 
 // Helper function for serde default
@@ -952,6 +952,38 @@ impl RenamePreview {
     }
 }
 
+/// Module map: one row per file with its exported symbols.
+#[mcp_tool(
+    name = "module_map",
+    description = "Detect module boundaries: one row per file (`module|exports|file`) with top-level symbols. USE WHEN: judging what is internal vs shared before calling across modules."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct ModuleMap {
+    /// File or directory to scan
+    pub path: String,
+    /// Max tokens budget
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    /// Paging offset
+    #[serde(default)]
+    pub offset: Option<u32>,
+    /// Paging limit
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+impl ModuleMap {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        let args = serde_json::json!({
+            "path": self.path,
+            "max_tokens": self.max_tokens,
+            "offset": self.offset,
+            "limit": self.limit
+        });
+        module_map::execute(&args).map_err(CallToolError::new)
+    }
+}
+
 /// Session bootstrap: types + minimal map + entries + tests in one call.
 #[mcp_tool(
     name = "session_bootstrap",
@@ -1071,6 +1103,7 @@ tool_box!(
         ApplySymbolEdit,
         SessionBootstrap,
         PromptSnippet,
-        RenamePreview
+        RenamePreview,
+        ModuleMap
     ]
 );
