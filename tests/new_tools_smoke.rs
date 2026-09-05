@@ -170,6 +170,22 @@ fn code_map_paging_meta() {
 }
 
 #[test]
+fn estimate_preview_search_and_usages() {
+    let dir = TempDir::new().unwrap();
+    let f = write_tmp(&dir, "a.py", "x = 1\nprint(x)\n# hello\n");
+    let args = json!({"pattern": "x", "path": dir.path().to_str().unwrap(), "estimate": true});
+    let r = treesitter_mcp::analysis::search_text::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    assert!(v["estimated_rows"].as_u64().unwrap() >= 1);
+    assert!(v.get("m").is_none());
+
+    let args = json!({"symbol": "x", "path": f, "estimate": true});
+    let r = treesitter_mcp::analysis::find_usages::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    assert!(v["estimated_rows"].as_u64().unwrap() >= 1);
+}
+
+#[test]
 fn find_usages_paging_total_offset() {
     let dir = TempDir::new().unwrap();
     let f = write_tmp(&dir, "a.py", "x = 1\nprint(x)\nprint(x)\n");

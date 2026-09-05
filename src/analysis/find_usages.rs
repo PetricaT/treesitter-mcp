@@ -75,6 +75,7 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let max_tokens = arguments["max_tokens"].as_u64().map(|v| v as usize);
     let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
     let limit = arguments["limit"].as_u64().map(|v| v as usize);
+    let estimate = arguments["estimate"].as_bool().unwrap_or(false);
 
     log::info!("Finding usages of '{symbol}' in: {path_str}");
 
@@ -123,6 +124,27 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     }
 
     let total = usages.len();
+    if estimate {
+        let total_chars: usize = usages
+            .iter()
+            .map(|u| u.file.len() + u.context.len() + u.scope.len() + 32)
+            .sum();
+        let mut files = std::collections::HashSet::new();
+        for u in &usages {
+            files.insert(u.file.clone());
+        }
+        let result = json!({
+            "sym": symbol,
+            "estimated_tokens": total_chars / 4 + total * 4,
+            "estimated_rows": total,
+            "scope_summary": format!("{} files", files.len()),
+            "total": total,
+        });
+        let text = serde_json::to_string(&result).map_err(|e| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("serialize: {e}"))
+        })?;
+        return Ok(CallToolResult::success(text));
+    }
     let paged: Vec<UsageRow> = {
         let it = usages.into_iter().skip(offset);
         match limit {

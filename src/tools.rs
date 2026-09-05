@@ -120,6 +120,9 @@ pub struct FindUsages {
     /// Paging limit over total matches.
     #[serde(default)]
     pub limit: Option<u32>,
+    /// Cost preview only: return estimated_tokens/rows/scope without payload.
+    #[serde(default)]
+    pub estimate: Option<bool>,
 }
 
 #[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
@@ -457,7 +460,8 @@ impl FindUsages {
             "max_context_lines": self.max_context_lines,
             "max_tokens": self.max_tokens,
             "offset": self.offset,
-            "limit": self.limit
+            "limit": self.limit,
+            "estimate": self.estimate
         });
 
         find_usages::execute(&args).map_err(CallToolError::new)
@@ -728,6 +732,9 @@ pub struct SearchText {
     /// Max tokens budget
     #[serde(default)]
     pub max_tokens: Option<u32>,
+    /// Cost preview only
+    #[serde(default)]
+    pub estimate: Option<bool>,
 }
 
 impl SearchText {
@@ -739,7 +746,8 @@ impl SearchText {
             "context_lines": self.context_lines,
             "offset": self.offset,
             "limit": self.limit,
-            "max_tokens": self.max_tokens
+            "max_tokens": self.max_tokens,
+            "estimate": self.estimate
         });
         if let Some(p) = &self.pattern {
             args["pattern"] = serde_json::json!(p);
