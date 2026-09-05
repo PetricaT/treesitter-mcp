@@ -18,12 +18,11 @@ than grepping plus reading every hit. Details and methodology:
 cargo build --release
 ```
 
-Homebrew and release binaries:
-
-```bash
-brew tap christoph/treesitter-mcp
-brew install treesitter-mcp
-```
+> [!NOTE]
+> This fork is not published on Homebrew (that tap belongs to upstream).
+> macOS users, grab the prebuilt `treesitter-mcp-*-apple-darwin.tar.gz`
+> from the [GitHub Releases](https://github.com/PetricaT/treesitter-mcp/releases/latest)
+> page instead of `brew install`.
 
 Point your MCP client at the binary (`target/release/treesitter-mcp`).
 For Claude Code:
