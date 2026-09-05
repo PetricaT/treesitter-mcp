@@ -17,6 +17,7 @@ pub mod format_diagnostics;
 pub mod format_references;
 pub mod minimal_edit_context;
 pub mod path_utils;
+pub mod prompt_snippet;
 pub mod query_pattern;
 pub mod relevant_tests;
 pub mod review_context;

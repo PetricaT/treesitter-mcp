@@ -79,6 +79,7 @@ impl ServerHandler for TreesitterServerHandler {
             TreesitterTools::CallPath(t) => t.call_tool(),
             TreesitterTools::ApplySymbolEdit(t) => t.call_tool(),
             TreesitterTools::SessionBootstrap(t) => t.call_tool(),
+            TreesitterTools::PromptSnippet(t) => t.call_tool(),
         }
     }
 }

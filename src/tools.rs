@@ -10,8 +10,8 @@ use rust_mcp_sdk::tool_box;
 use crate::analysis::{
     apply_edit, arg_flow, batch, bootstrap, call_graph, call_path, code_map, depends, diff,
     find_usages, find_writes, format_diagnostics, format_references, minimal_edit_context,
-    query_pattern, relevant_tests, review_context, search_text, symbol_at_line, verify_edit,
-    view_code,
+    prompt_snippet, query_pattern, relevant_tests, review_context, search_text, symbol_at_line,
+    verify_edit, view_code,
 };
 
 // Helper function for serde default
@@ -898,6 +898,22 @@ impl ApplySymbolEdit {
     }
 }
 
+/// Agent system-prompt fragment: when to reach for which tool.
+#[mcp_tool(
+    name = "prompt_snippet",
+    description = "Return a short pasteable system-prompt fragment with tool-choice decision rules (~150 words). No input needed."
+)]
+#[derive(Debug, ::serde::Deserialize, ::serde::Serialize, JsonSchema)]
+pub struct PromptSnippet {}
+
+impl PromptSnippet {
+    pub fn call_tool(&self) -> Result<CallToolResult, CallToolError> {
+        Ok(CallToolResult::text_content(vec![
+            rust_mcp_sdk::schema::TextContent::from(prompt_snippet::snippet().to_string()),
+        ]))
+    }
+}
+
 /// Session bootstrap: types + minimal map + entries + tests in one call.
 #[mcp_tool(
     name = "session_bootstrap",
@@ -1015,6 +1031,7 @@ tool_box!(
         ArgFlow,
         CallPath,
         ApplySymbolEdit,
-        SessionBootstrap
+        SessionBootstrap,
+        PromptSnippet
     ]
 );
