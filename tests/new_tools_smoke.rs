@@ -139,6 +139,21 @@ fn call_graph_rank_adds_hints() {
 }
 
 #[test]
+fn code_map_paging_meta() {
+    let dir = TempDir::new().unwrap();
+    write_tmp(&dir, "a.py", "def fa():\n    pass\n");
+    write_tmp(&dir, "b.py", "def fb():\n    pass\n");
+    let args = json!({"path": dir.path().to_str().unwrap(), "limit": 1, "offset": 0});
+    let r = treesitter_mcp::analysis::code_map::execute(&args).unwrap();
+    let v: Value = serde_json::from_str(&result_text(&r)).unwrap();
+    assert_eq!(v["@"]["total"], 2);
+    assert_eq!(v["@"]["offset"], 0);
+    // only one file key besides @ (and maybe types)
+    let file_keys: Vec<_> = v.as_object().unwrap().keys().filter(|k| *k != "@" && *k != "types").collect();
+    assert_eq!(file_keys.len(), 1);
+}
+
+#[test]
 fn find_usages_paging_total_offset() {
     let dir = TempDir::new().unwrap();
     let f = write_tmp(&dir, "a.py", "x = 1\nprint(x)\nprint(x)\n");

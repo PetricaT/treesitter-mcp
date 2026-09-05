@@ -84,6 +84,12 @@ pub struct CodeMap {
     /// When with_types=true, also count usages for each type (default: false for performance).
     #[serde(default)]
     pub count_usages: Option<bool>,
+    /// Paging offset over files (uses `@.total`/`@.offset`).
+    #[serde(default)]
+    pub offset: Option<u32>,
+    /// Paging limit over files.
+    #[serde(default)]
+    pub limit: Option<u32>,
 }
 
 /// Find all usages of a symbol with context and usage type classification
@@ -433,7 +439,9 @@ impl CodeMap {
             "detail": self.detail,
             "pattern": self.pattern,
             "with_types": self.with_types.unwrap_or(false),
-            "count_usages": self.count_usages.unwrap_or(false)
+            "count_usages": self.count_usages.unwrap_or(false),
+            "offset": self.offset,
+            "limit": self.limit
         });
 
         code_map::execute(&args).map_err(CallToolError::new)
@@ -662,6 +670,12 @@ pub struct TypeMap {
     /// Set to false for faster results when you only need type locations.
     #[serde(default)]
     pub count_usages: Option<bool>,
+    /// Paging limit (uses `@.total`/`@.offset`).
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Paging offset.
+    #[serde(default)]
+    pub offset: Option<u32>,
 }
 
 impl TypeMap {
@@ -670,7 +684,9 @@ impl TypeMap {
             "path": self.path,
             "max_tokens": self.max_tokens.unwrap_or(2000),
             "pattern": self.pattern,
-            "count_usages": self.count_usages.unwrap_or(true)
+            "count_usages": self.count_usages.unwrap_or(true),
+            "limit": self.limit,
+            "offset": self.offset
         });
 
         crate::analysis::type_map::execute(&args)

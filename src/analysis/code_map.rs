@@ -94,6 +94,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
     let pattern = arguments["pattern"].as_str();
     let with_types = arguments["with_types"].as_bool().unwrap_or(false);
     let count_usages = arguments["count_usages"].as_bool().unwrap_or(false);
+    let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
+    let limit = arguments["limit"].as_u64().map(|v| v as usize);
 
     log::info!(
         "Generating compact code map for: {path_str} (max_tokens: {max_tokens}, detail: {detail_str}, with_types: {with_types})"
@@ -157,8 +159,27 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult, io::Error> {
         entry.path = path_utils::to_relative_path(&entry.path);
     }
 
-    let (result_map, _truncated) =
+    let total = result.files.len();
+    if offset > 0 || limit.is_some() {
+        let files = std::mem::take(&mut result.files);
+        let skipped = files.into_iter().skip(offset);
+        result.files = match limit {
+            Some(n) => skipped.take(n).collect(),
+            None => skipped.collect(),
+        };
+    }
+
+    let (mut result_map, _truncated) =
         build_compact_output_combined(&result, detail_level, max_tokens, with_types)?;
+
+    // Paging meta under `@` (backward compatible: `@.t` still signals truncation).
+    let meta = result_map
+        .entry("@".to_string())
+        .or_insert_with(|| json!({}));
+    if let Some(obj) = meta.as_object_mut() {
+        obj.insert("total".to_string(), json!(total));
+        obj.insert("offset".to_string(), json!(offset));
+    }
 
     let json_text = serde_json::to_string(&Value::Object(result_map)).map_err(|e| {
         io::Error::new(

@@ -69,7 +69,8 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
         None => extraction_result.types,
     };
 
-    // 5) Pagination
+    // 5) Pagination (total before paging so agents can page)
+    let total = filtered.len();
     if offset > 0 {
         filtered = filtered.into_iter().skip(offset).collect();
     }
@@ -121,8 +122,15 @@ pub fn execute(arguments: &Value) -> Result<CallToolResult> {
         out.insert("types".to_string(), json!(lines.join("\n")));
     }
 
-    if truncated {
-        out.insert("@".to_string(), json!({"t": true}));
+    // Paging meta under `@` (backward compatible: `@.t` still truncation).
+    if truncated || offset > 0 || total != filtered.len() {
+        let mut meta = serde_json::Map::new();
+        if truncated {
+            meta.insert("t".to_string(), json!(true));
+        }
+        meta.insert("total".to_string(), json!(total));
+        meta.insert("offset".to_string(), json!(offset));
+        out.insert("@".to_string(), Value::Object(meta));
     }
 
     Ok(CallToolResult::success(
